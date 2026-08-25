@@ -32,8 +32,10 @@ import { registerPick } from "./commands/pick.js";
 import { registerPickerRows } from "./commands/picker-rows.js";
 import { registerPreviewCard } from "./commands/__preview-card.js";
 import { registerResume } from "./commands/resume.js";
+import { registerAttach } from "./commands/attach.js";
 import { registerRun } from "./commands/run.js";
 import { registerShow } from "./commands/show.js";
+import { registerSpawn } from "./commands/spawn.js";
 import { registerSummarize } from "./commands/summarize.js";
 import { registerTmux } from "./commands/tmux.js";
 import { red, dim } from "./format.js";
@@ -134,6 +136,8 @@ registerOrganize(program);
 registerRun(program);
 registerWatch(program);
 registerDaemon(program);
+registerAttach(program);
+registerSpawn(program);
 
 async function main(): Promise<void> {
   try {
