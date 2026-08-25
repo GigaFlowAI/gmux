@@ -47,6 +47,9 @@ export interface TmuxPane {
  * An exact pane→session link recorded by `gmux run`. Ephemeral runtime state: a
  * `paneId` means nothing once the tmux server dies, so this lives in the cache
  * and is pruned to the live pane set on every read of the overlay.
+ *
+ * In the live mux lane, pane ids become `p_<ulid>` (Crockford); the shape of
+ * this type is unchanged.
  */
 export interface PaneLink {
   paneId: string;

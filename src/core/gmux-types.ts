@@ -1,4 +1,5 @@
 import type { HarnessId } from "./types.js";
+import type { ToolStart } from "./mux-types.js";
 
 /** The five triage-critical pane states, ordered least→most attention-worthy for display. */
 export const PANE_STATES = ["working", "idle", "waiting", "error", "done"] as const;
@@ -24,6 +25,8 @@ export interface Observation {
   sawError?: boolean;
   /** True when the agent transcript indicates the task ended/finished. */
   ended?: boolean;
+  /** Agent tool starts observed in this slice (mux live lane). */
+  toolStarts?: ToolStart[];
 }
 
 /** The human-readable "what it's doing" layer. */
@@ -53,6 +56,12 @@ export interface PaneIdentity {
   cwd: string;
   command: string;
   pid: number;
+  /** Mux tab id (live lane); optional while tmux windows remain. */
+  tabId?: string;
+  /** Workspace fingerprint id (live lane). */
+  workspaceId?: string;
+  /** 0 user-spawned; +1 each peel. */
+  peelDepth?: number;
 }
 
 /** One pane's complete state in the model. */
