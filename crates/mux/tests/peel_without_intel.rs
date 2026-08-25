@@ -15,3 +15,14 @@ async fn peel_spawns_from_shadow_without_intel() {
     assert_eq!(h.focused("c1"), parent.pane_id);
     assert_ne!(child.tab_id, parent.tab_id);
 }
+
+#[tokio::test]
+async fn pane_peels_from_self_without_client_focus() {
+    let h = harness::start().await;
+    let parent = h.spawn_shell("/tmp").await;
+    h.write_input(&parent.pane_id, b"also fix the webhook")
+        .await;
+    let child = h.peel_from_pane(&parent.pane_id).await.unwrap();
+    assert_ne!(child.pane_id, parent.pane_id);
+    assert_ne!(child.tab_id, parent.tab_id);
+}

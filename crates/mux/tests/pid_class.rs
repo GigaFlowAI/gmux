@@ -1,4 +1,4 @@
-use gmuxd::peer::{CallerClass, ClassifyError, PidTree, classify};
+use gmuxd::peer::{CallerClass, ClassifyError, PidTree, classify, intel_hello, may_attach};
 
 fn pane(id: &str, pids: &[u32]) -> PidTree {
     PidTree {
@@ -61,4 +61,46 @@ fn tui_is_not_classified_by_pid() {
         classify(7, &[], false, None, None).unwrap(),
         CallerClass::Tui
     );
+}
+
+#[test]
+fn unknown_peer_pid_is_refused_not_cli() {
+    let refused = classify(0, &[], false, None, None);
+    assert!(
+        matches!(refused, Err(ClassifyError::PermissionDenied { .. })),
+        "failed peer_pid must not promote to cli: {refused:?}"
+    );
+}
+
+#[test]
+fn pane_cannot_attach_as_tui() {
+    assert!(!may_attach(CallerClass::Pane));
+    assert!(!may_attach(CallerClass::Intel));
+    assert!(may_attach(CallerClass::Cli));
+    assert!(may_attach(CallerClass::Tui));
+}
+
+#[test]
+fn intel_hello_mints_once_then_requires_pid_match() {
+    let token = "secret";
+    assert_eq!(
+        intel_hello(token, token, 9, None, Some(CallerClass::Cli)).unwrap(),
+        9
+    );
+    assert_eq!(
+        intel_hello(token, token, 9, Some(9), Some(CallerClass::Cli)).unwrap(),
+        9
+    );
+    assert!(matches!(
+        intel_hello(token, token, 50, Some(9), Some(CallerClass::Cli)),
+        Err(ClassifyError::PermissionDenied { .. })
+    ));
+    assert!(matches!(
+        intel_hello(token, token, 101, None, Some(CallerClass::Pane)),
+        Err(ClassifyError::PermissionDenied { .. })
+    ));
+    assert!(matches!(
+        intel_hello(token, "other", 9, None, Some(CallerClass::Cli)),
+        Err(ClassifyError::PermissionDenied { .. })
+    ));
 }

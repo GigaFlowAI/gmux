@@ -65,6 +65,10 @@ impl Harness {
         gmuxd::peel::peel(&mut self.mux.lock().unwrap(), client_id)
     }
 
+    pub async fn peel_from_pane(&self, pane_id: &str) -> Result<Spawned, MuxError> {
+        gmuxd::peel::peel_from_pane(&mut self.mux.lock().unwrap(), pane_id, None)
+    }
+
     pub fn focused(&self, client_id: &str) -> String {
         self.mux
             .lock()

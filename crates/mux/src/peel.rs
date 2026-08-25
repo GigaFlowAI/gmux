@@ -2,7 +2,7 @@
 
 use crate::session::{Mux, MuxError, SpawnOpts, Spawned, TabSpec};
 
-/// Fast path. Seed = parent shadow (or empty). `focus: false` for this client.
+/// Fast path for a TUI/cli client: peel **this client's** focused pane.
 pub fn peel(mux: &mut Mux, client_id: &str) -> Result<Spawned, MuxError> {
     let parent_id = mux.focused(client_id).map(str::to_string).ok_or_else(|| {
         MuxError::rpc(
@@ -11,8 +11,17 @@ pub fn peel(mux: &mut Mux, client_id: &str) -> Result<Spawned, MuxError> {
             "Focus a pane or pass --from <paneId>",
         )
     })?;
+    peel_from_pane(mux, &parent_id, Some(client_id))
+}
+
+/// Fast path for a pane caller: peel **from self**. `focus: false`.
+pub fn peel_from_pane(
+    mux: &mut Mux,
+    parent_id: &str,
+    client_id: Option<&str>,
+) -> Result<Spawned, MuxError> {
     let (cwd, workspace_id, peel_depth, title) = {
-        let parent = mux.panes.get(&parent_id).ok_or_else(|| {
+        let parent = mux.panes.get(parent_id).ok_or_else(|| {
             MuxError::rpc(
                 "not_found",
                 &format!("pane {parent_id} not found"),
@@ -42,7 +51,7 @@ pub fn peel(mux: &mut Mux, client_id: &str) -> Result<Spawned, MuxError> {
         tab: TabSpec::New { name: title },
         focus: false,
         peel_depth,
-        client_id: Some(client_id.to_string()),
+        client_id: client_id.map(str::to_string),
         workspace_id: Some(workspace_id),
     })
 }

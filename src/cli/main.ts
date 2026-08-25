@@ -35,7 +35,7 @@ import { registerResume } from "./commands/resume.js";
 import { registerAttach } from "./commands/attach.js";
 import { registerRun } from "./commands/run.js";
 import { registerShow } from "./commands/show.js";
-import { registerSpawn } from "./commands/spawn.js";
+import { isMuxControlCommand, registerSpawn } from "./commands/spawn.js";
 import { registerSummarize } from "./commands/summarize.js";
 import { registerTmux } from "./commands/tmux.js";
 import { red, dim } from "./format.js";
@@ -106,6 +106,10 @@ program
     // `resumeSession`, which waits on your harness, so this hook would not fire
     // until you quit Claude Code.
     if (actionCommand.name() === "ls" || actionCommand.name() === "pick") return;
+
+    // Headless mux verbs speak NDJSON; a summarizer child on stderr is noise
+    // and can start a model call from `gmux spawn --json`.
+    if (isMuxControlCommand(actionCommand.name(), actionCommand.parent?.name())) return;
 
     await maybeAutoSummarize({
       enabled: thisCommand.opts()["autoSummarize"] !== false,

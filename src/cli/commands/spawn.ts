@@ -199,6 +199,13 @@ function printJson(data: unknown): void {
   process.stdout.write(`${jsonEnvelope(SCHEMA_VERSION, data)}\n`);
 }
 
+/** Mux control commands must not fork the background summarizer. */
+export function isMuxControlCommand(name: string, parentName?: string): boolean {
+  if (name === "spawn" || name === "snapshot" || name === "attach") return true;
+  if (parentName === "panes") return true;
+  return false;
+}
+
 export function registerSpawn(program: Command): void {
   program
     .command("spawn")

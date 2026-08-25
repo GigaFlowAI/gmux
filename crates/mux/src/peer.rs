@@ -34,6 +34,12 @@ impl ClassifyError {
             fix: fix.into(),
         }
     }
+
+    pub fn fix(&self) -> &str {
+        match self {
+            Self::PermissionDenied { fix, .. } => fix,
+        }
+    }
 }
 
 /// Pure classifier. `intel_pid` is `mux.lock`'s `intelPid`.
@@ -51,6 +57,12 @@ pub fn classify(
     env_pane_id: Option<&str>,
     intel_pid: Option<u32>,
 ) -> Result<CallerClass, ClassifyError> {
+    if peer_pid == 0 {
+        return Err(ClassifyError::denied(
+            "peer pid unknown",
+            "Refuse the connection — unknown pid is not cli",
+        ));
+    }
     if intel_pid == Some(peer_pid) {
         if has_token {
             return Ok(CallerClass::Intel);
@@ -86,6 +98,49 @@ pub fn classify(
     }
 
     Ok(CallerClass::Cli)
+}
+
+/// `client.attach` is TUI hello. A pane descendant stays `pane`.
+pub fn may_attach(class: CallerClass) -> bool {
+    matches!(class, CallerClass::Cli | CallerClass::Tui)
+}
+
+/// Intel `hello`: token + pid. First hello (no `intelPid` yet) may mint the
+/// peer pid only for a non-pane caller. Later hellos must match the minted pid.
+/// Token without pid match is `permission_denied`.
+pub fn intel_hello(
+    presented_token: &str,
+    expected_token: &str,
+    peer_pid: u32,
+    intel_pid: Option<u32>,
+    caller: Option<CallerClass>,
+) -> Result<u32, ClassifyError> {
+    if presented_token.is_empty() || presented_token != expected_token {
+        return Err(ClassifyError::denied(
+            "intel hello token mismatch",
+            "Read intel.token (mode 0600) minted by gmuxd",
+        ));
+    }
+    if peer_pid == 0 {
+        return Err(ClassifyError::denied(
+            "peer pid unknown",
+            "Refuse the connection — unknown pid is not cli",
+        ));
+    }
+    match intel_pid {
+        Some(pid) if pid == peer_pid => Ok(pid),
+        Some(_) => Err(ClassifyError::denied(
+            "intel.token did not match the intel sidecar pid",
+            "Only the sidecar process may present intel.token",
+        )),
+        None => match caller {
+            Some(CallerClass::Cli) | Some(CallerClass::Tui) => Ok(peer_pid),
+            _ => Err(ClassifyError::denied(
+                "intel.token did not match the intel sidecar pid",
+                "Only the sidecar process may present intel.token",
+            )),
+        },
+    }
 }
 
 /// macOS `LOCAL_PEERPID` (`0x002` / `sys/un.h`).

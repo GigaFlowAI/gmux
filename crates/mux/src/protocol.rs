@@ -109,8 +109,15 @@ async fn handle_client(
     lock: Arc<Mutex<Lock>>,
     stream: tokio::net::UnixStream,
 ) -> std::io::Result<()> {
-    let peer_pid = peer::peer_pid(stream.as_raw_fd()).unwrap_or(0);
-    let env_pane_id = peer::env_var_of(peer_pid, "GMUX_PANE_ID");
+    let peer_pid = match peer::peer_pid(stream.as_raw_fd()) {
+        Ok(pid) if pid != 0 => pid,
+        _ => 0,
+    };
+    let env_pane_id = if peer_pid == 0 {
+        None
+    } else {
+        peer::env_var_of(peer_pid, "GMUX_PANE_ID")
+    };
     let class = {
         let guard = mux.lock().expect("mux");
         peer::classify(
@@ -206,17 +213,13 @@ async fn dispatch(
         "client.attach" => handle_attach(mux, conn, req),
         "session.snapshot" => gated(conn, req, "session.snapshot", |conn| {
             let guard = mux.lock().expect("mux");
+            let mut snap = guard.snapshot();
             if let Ok(CallerClass::Pane) = conn.class {
-                let ws = pane_workspace(&guard, conn.env_pane_id.as_deref());
-                let mut snap = guard.snapshot();
-                if let Some(ws) = ws {
-                    if let Some(arr) = snap.get_mut("workspaces").and_then(Value::as_array_mut) {
-                        arr.retain(|w| w.get("id").and_then(Value::as_str) == Some(ws.as_str()));
-                    }
+                if let Some(ws) = pane_workspace(&guard, conn.env_pane_id.as_deref()) {
+                    filter_snapshot_to_workspace(&mut snap, &ws);
                 }
-                return ok(&req.id, snap);
             }
-            ok(&req.id, guard.snapshot())
+            ok(&req.id, snap)
         }),
         "pane.list" => gated(conn, req, "pane.list", |conn| {
             let guard = mux.lock().expect("mux");
@@ -263,21 +266,35 @@ async fn dispatch(
             }
         }),
         "peel" => gated(conn, req, "peel", |conn| {
-            let client_id = req
-                .params
-                .get("clientId")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .or_else(|| conn.client_id.clone());
-            let Some(client_id) = client_id else {
-                return error(
-                    &req.id,
-                    "invalid_request",
-                    "peel needs a clientId",
-                    "Attach a TUI or pass params.clientId",
-                );
+            let mut guard = mux.lock().expect("mux");
+            let result = if let Ok(CallerClass::Pane) = conn.class {
+                let Some(pane_id) = conn.env_pane_id.as_deref() else {
+                    return error(
+                        &req.id,
+                        "permission_denied",
+                        "pane peel requires GMUX_PANE_ID",
+                        "A descendant of a pane pid peels from self — unset GMUX_PANE_ID is permission_denied",
+                    );
+                };
+                crate::peel::peel_from_pane(&mut guard, pane_id, None)
+            } else {
+                let client_id = req
+                    .params
+                    .get("clientId")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .or_else(|| conn.client_id.clone());
+                let Some(client_id) = client_id else {
+                    return error(
+                        &req.id,
+                        "invalid_request",
+                        "peel needs a clientId",
+                        "Attach a TUI or pass params.clientId",
+                    );
+                };
+                crate::peel::peel(&mut guard, &client_id)
             };
-            match crate::peel::peel(&mut mux.lock().expect("mux"), &client_id) {
+            match result {
                 Ok(spawned) => ok(&req.id, json!(spawned)),
                 Err(err) => err_of(&req.id, &err),
             }
@@ -357,25 +374,33 @@ fn handle_hello(
         .and_then(Value::as_str)
         .unwrap_or("");
     let mut guard = mux.lock().expect("mux");
-    if token.is_empty() || token != guard.intel_token {
-        return error(
-            &req.id,
-            "permission_denied",
-            "intel hello token mismatch",
-            "Read intel.token (mode 0600) minted by gmuxd",
-        );
+    let caller = conn.class.as_ref().ok().copied();
+    match peer::intel_hello(
+        token,
+        &guard.intel_token,
+        conn.peer_pid,
+        guard.intel_pid,
+        caller,
+    ) {
+        Ok(pid) => {
+            guard.intel_pid = Some(pid);
+            drop(guard);
+            if let Ok(mut held) = lock.lock() {
+                let _ = held.set_intel_pid(Some(pid));
+            }
+            conn.class = Ok(CallerClass::Intel);
+            ok(&req.id, json!({"ok": true, "class": "intel"}))
+        }
+        Err(err) => error(&req.id, "permission_denied", &err.to_string(), err.fix()),
     }
-    guard.intel_pid = Some(conn.peer_pid);
-    drop(guard);
-    if let Ok(mut held) = lock.lock() {
-        let _ = held.set_intel_pid(Some(conn.peer_pid));
-    }
-    conn.class = Ok(CallerClass::Intel);
-    ok(&req.id, json!({"ok": true, "class": "intel"}))
 }
 
 fn handle_attach(mux: &Arc<Mutex<Mux>>, conn: &mut Conn, req: &Request) -> Value {
-    if matches!(conn.class, Err(_)) {
+    let allowed = match &conn.class {
+        Ok(class) => peer::may_attach(*class),
+        Err(_) => false,
+    };
+    if !allowed {
         return error(
             &req.id,
             "permission_denied",
@@ -474,6 +499,33 @@ fn spawn_params(req: &Request, conn: &Conn) -> Result<SpawnOpts, MuxError> {
 
 fn pane_workspace(mux: &Mux, pane_id: Option<&str>) -> Option<String> {
     pane_id.and_then(|id| mux.panes.get(id).map(|p| p.workspace_id.clone()))
+}
+
+/// Pane callers see only their workspace: workspaces, panes, and clients.
+pub fn filter_snapshot_to_workspace(snap: &mut Value, workspace_id: &str) {
+    let pane_ids: Vec<String> = snap
+        .get("panes")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter(|p| p.get("workspaceId").and_then(Value::as_str) == Some(workspace_id))
+                .filter_map(|p| p.get("paneId").and_then(Value::as_str).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(arr) = snap.get_mut("workspaces").and_then(Value::as_array_mut) {
+        arr.retain(|w| w.get("id").and_then(Value::as_str) == Some(workspace_id));
+    }
+    if let Some(arr) = snap.get_mut("panes").and_then(Value::as_array_mut) {
+        arr.retain(|p| p.get("workspaceId").and_then(Value::as_str) == Some(workspace_id));
+    }
+    if let Some(arr) = snap.get_mut("clients").and_then(Value::as_array_mut) {
+        arr.retain(|c| {
+            c.get("focusedPaneId")
+                .and_then(Value::as_str)
+                .is_some_and(|id| pane_ids.iter().any(|p| p == id))
+        });
+    }
 }
 
 fn ok(id: &Value, result: Value) -> Value {
