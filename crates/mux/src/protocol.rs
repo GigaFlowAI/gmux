@@ -1143,22 +1143,8 @@ fn spawn_params_for(req: &Request, conn: &Conn, mux: &Mux) -> Result<SpawnOpts, 
 }
 
 fn pane_template_spawn(req: &Request, conn: &Conn, mux: &Mux) -> Result<SpawnOpts, MuxError> {
-    let deny = |field: &str| {
-        MuxError::rpc(
-            "permission_denied",
-            &format!("pane may not pass {field}"),
-            "A pane may spawn --template tests|logs|review only",
-        )
-    };
-    if req.params.get("argv").is_some() {
-        return Err(deny("argv"));
-    }
-    if req.params.get("env").is_some() {
-        return Err(deny("env"));
-    }
-    if req.params.get("peelDepth").is_some() {
-        return Err(deny("peelDepth"));
-    }
+    // Ignore argv/env/peelDepth if present. The pane CLI (`gmux spawn --template`)
+    // always sends idle-shell argv; rejecting presence would deny the spec path.
     let template_id = req
         .params
         .get("templateId")
@@ -1406,15 +1392,13 @@ mod tests {
     }
 
     #[test]
-    fn pane_spawn_denies_argv_env_peel_depth() {
+    fn pane_spawn_denies_missing_or_unknown_template() {
         let (_dir, mux, parent) = mux_with_parent(2);
         let conn = pane_conn(&parent);
         for params in [
-            json!({ "argv": ["claude"], "templateId": "tests" }),
-            json!({ "env": { "FOO": "1" }, "templateId": "tests" }),
-            json!({ "peelDepth": 0, "templateId": "tests" }),
             json!({ "argv": ["claude"], "peelDepth": 0 }),
             json!({}),
+            json!({ "templateId": "not-a-template", "argv": ["claude"] }),
         ] {
             let req = Request {
                 id: json!("1"),
@@ -1427,26 +1411,24 @@ mod tests {
     }
 
     #[test]
-    fn pane_spawn_template_derives_peel_depth_from_parent() {
+    fn pane_spawn_template_ignores_argv_env_peel_depth() {
         let (_dir, mux, parent) = mux_with_parent(2);
         let conn = pane_conn(&parent);
         let req = Request {
             id: json!("1"),
             method: "pane.spawn".into(),
-            params: json!({ "templateId": "tests", "peelDepth": 0, "argv": ["/bin/zsh"] }),
-        };
-        let denied = spawn_params_for(&req, &conn, &mux).unwrap_err();
-        assert_eq!(denied.code(), "permission_denied");
-
-        let req = Request {
-            id: json!("1"),
-            method: "pane.spawn".into(),
-            params: json!({ "templateId": "tests" }),
+            params: json!({
+                "templateId": "tests",
+                "peelDepth": 0,
+                "argv": ["/bin/zsh"],
+                "env": { "FOO": "1" },
+            }),
         };
         let opts = spawn_params_for(&req, &conn, &mux).unwrap();
         assert_eq!(opts.peel_depth, 2, "must not reset peelDepth to 0");
         assert_eq!(opts.template_id.as_deref(), Some("tests"));
         assert_eq!(opts.argv, Mux::login_shell_argv());
+        assert!(opts.env.is_empty(), "caller env must not leak onto template spawn");
         assert!(!opts.focus);
         match opts.tab {
             TabSpec::New { name } => assert_eq!(name, "tests"),
