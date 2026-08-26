@@ -26,7 +26,7 @@ use tokio::sync::mpsc;
 use crate::frames::{self, Frame, Kind};
 use crate::keymap::{self, Action, Mode};
 use crate::paths::Paths;
-use crate::sidebar::{self, Hit, Model};
+use crate::sidebar::{self, Funnel, Hit, Model};
 
 #[derive(Debug, thiserror::Error)]
 pub enum TuiError {
@@ -174,6 +174,7 @@ pub async fn run(cwd: PathBuf) -> Result<(), TuiError> {
     let ws = workspace_of(&snap, focused.as_deref());
     let mut model = Model::from_snapshot(&snap, ws.as_deref());
     model.focused_pane_id = focused.clone();
+    let mut funnel = Funnel::new(model.panes.iter().map(|p| p.pane_id.clone()).collect());
     let _ = rpc(
         &mut ctrl_write,
         &mut lines,
@@ -210,47 +211,62 @@ pub async fn run(cwd: PathBuf) -> Result<(), TuiError> {
     let mut snap = SnapFlight::default();
     let mut term_rows = term_rows;
 
-    paint(&mut terminal, last_frame.as_ref(), &model, mode, false)?;
+    paint(
+        &mut terminal,
+        last_frame.as_ref(),
+        &model,
+        &funnel,
+        mode,
+        false,
+    )?;
 
     loop {
         while event::poll(Duration::from_millis(0))? {
             match event::read()? {
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
-                    let (next, action) = keymap::handle(mode, key_to_keymap(&key));
-                    mode = next;
-                    match action {
-                        Action::Detach => return Ok(()),
-                        Action::Peel => {
-                            send_rpc(
-                                &mut ctrl_write,
-                                &mut next_id,
-                                "peel",
-                                json!({ "clientId": client_id }),
-                            )
-                            .await?;
-                        }
-                        Action::Forward => {
-                            if let Some(bytes) = key_bytes(&key) {
-                                writer.write_all(&frames::encode_input(&bytes)).await?;
-                                writer.flush().await?;
-                            }
-                        }
-                        Action::None => {}
+                    if apply_key(
+                        &mut mode,
+                        &mut funnel,
+                        key_to_keymap(&key),
+                        &key,
+                        &mut ctrl_write,
+                        &mut next_id,
+                        &client_id,
+                        &mut writer,
+                    )
+                    .await?
+                    {
+                        return Ok(());
                     }
-                    paint(&mut terminal, last_frame.as_ref(), &model, mode, false)?;
+                    paint(
+                        &mut terminal,
+                        last_frame.as_ref(),
+                        &model,
+                        &funnel,
+                        mode,
+                        false,
+                    )?;
                 }
                 Event::Resize(c, r) => {
                     term_rows = r;
                     let (pc, pr) = sidebar::pty_winsize(c, r);
                     writer.write_all(&frames::encode_resize(pc, pr)).await?;
                     writer.flush().await?;
-                    paint(&mut terminal, last_frame.as_ref(), &model, mode, false)?;
+                    paint(
+                        &mut terminal,
+                        last_frame.as_ref(),
+                        &model,
+                        &funnel,
+                        mode,
+                        false,
+                    )?;
                 }
                 Event::Mouse(mouse) => {
                     handle_mouse(
                         mouse,
                         &mut mode,
                         &mut model,
+                        &funnel,
                         term_rows,
                         &mut ctrl_write,
                         &mut next_id,
@@ -260,7 +276,14 @@ pub async fn run(cwd: PathBuf) -> Result<(), TuiError> {
                     if let Some(id) = model.focused_pane_id.clone() {
                         focused = Some(id);
                     }
-                    paint(&mut terminal, last_frame.as_ref(), &model, mode, false)?;
+                    paint(
+                        &mut terminal,
+                        last_frame.as_ref(),
+                        &model,
+                        &funnel,
+                        mode,
+                        false,
+                    )?;
                 }
                 _ => {}
             }
@@ -285,9 +308,16 @@ pub async fn run(cwd: PathBuf) -> Result<(), TuiError> {
                 }
                 let (outcome, result) = snap.on_reply(&v);
                 if let Some(result) = result {
-                    apply_snapshot(&mut model, &result, focused.as_deref());
+                    apply_snapshot(&mut model, &mut funnel, &result, focused.as_deref());
                     last_snap = Instant::now();
-                    paint(&mut terminal, last_frame.as_ref(), &model, mode, false)?;
+                    paint(
+                        &mut terminal,
+                        last_frame.as_ref(),
+                        &model,
+                        &funnel,
+                        mode,
+                        false,
+                    )?;
                 } else if outcome == SnapOutcome::Failed {
                     last_snap = Instant::now();
                 }
@@ -308,7 +338,14 @@ pub async fn run(cwd: PathBuf) -> Result<(), TuiError> {
                 writer.write_all(&frames::encode_ack(frame.seq)).await?;
                 writer.flush().await?;
                 last_frame = Some(frame);
-                paint(&mut terminal, last_frame.as_ref(), &model, mode, clear)?;
+                paint(
+                    &mut terminal,
+                    last_frame.as_ref(),
+                    &model,
+                    &funnel,
+                    mode,
+                    clear,
+                )?;
             }
             _ = tokio::time::sleep(Duration::from_millis(16)) => {
                 if snap.idle() && last_snap.elapsed() >= Duration::from_millis(500) {
@@ -326,43 +363,96 @@ pub async fn run(cwd: PathBuf) -> Result<(), TuiError> {
     }
 }
 
+/// Funnel-aware chrome dispatch. Esc collapses drawer → overview → glance
+/// before leaving the sidebar. Funnel state stays client-local.
+pub(crate) fn chrome_key(mode: Mode, funnel: &mut Funnel, km: keymap::Key) -> (Mode, Action) {
+    if matches!(mode, Mode::Sidebar | Mode::Drawer) && km == keymap::Key::Esc {
+        if funnel.esc() {
+            return (Mode::Sidebar, Action::None);
+        }
+        return (Mode::Pty, Action::None);
+    }
+    let (mut next, action) = keymap::handle(mode, km);
+    match action {
+        Action::SelectNext => funnel.next(),
+        Action::SelectPrev => funnel.prev(),
+        Action::EnterDrawer => {
+            funnel.enter();
+            if funnel.drawer().is_none() {
+                next = Mode::Sidebar;
+            }
+        }
+        Action::StartPrompt(c) => funnel.push_pending(c),
+        _ => {}
+    }
+    (next, action)
+}
+
+/// Returns true when the TUI should detach.
+async fn apply_key(
+    mode: &mut Mode,
+    funnel: &mut Funnel,
+    km: keymap::Key,
+    key: &KeyEvent,
+    ctrl_write: &mut OwnedWriteHalf,
+    next_id: &mut u64,
+    client_id: &str,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> Result<bool, TuiError> {
+    let (next, action) = chrome_key(*mode, funnel, km);
+    *mode = next;
+    match action {
+        Action::Detach => return Ok(true),
+        Action::Peel => {
+            send_rpc(
+                ctrl_write,
+                next_id,
+                "peel",
+                json!({ "clientId": client_id }),
+            )
+            .await?;
+        }
+        Action::Forward => {
+            if let Some(bytes) = key_bytes(key) {
+                writer.write_all(&frames::encode_input(&bytes)).await?;
+                writer.flush().await?;
+            }
+        }
+        Action::SelectNext
+        | Action::SelectPrev
+        | Action::EnterDrawer
+        | Action::StartPrompt(_)
+        | Action::None => {}
+    }
+    Ok(false)
+}
+
 async fn handle_mouse(
     mouse: MouseEvent,
     mode: &mut Mode,
     model: &mut Model,
+    funnel: &Funnel,
     term_rows: u16,
     ctrl_write: &mut OwnedWriteHalf,
     next_id: &mut u64,
     frames_write: &mut tokio::net::unix::OwnedWriteHalf,
 ) -> Result<(), TuiError> {
+    let lay = sidebar::layout(model, funnel, term_rows);
     if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
         if matches!(
             mouse.kind,
             MouseEventKind::Down(_) | MouseEventKind::Drag(_) | MouseEventKind::Moved
         ) {
-            if let Hit::Content { x, y } = sidebar::hit_test(
-                mouse.column,
-                mouse.row,
-                term_rows,
-                model.pins.len(),
-                model.visible_panes(term_rows).len(),
-            ) {
+            if let Hit::Content { x, y } = sidebar::hit_layout(mouse.column, mouse.row, &lay) {
                 // Stub: forward only once the pane has requested tracking.
                 let _ = (x, y, frames_write);
             }
         }
         return Ok(());
     }
-    let visible = model.visible_panes(term_rows).len();
-    match sidebar::hit_test(
-        mouse.column,
-        mouse.row,
-        term_rows,
-        model.pins.len(),
-        visible,
-    ) {
+    match sidebar::hit_layout(mouse.column, mouse.row, &lay) {
         Hit::ChromeRow(i) => {
-            if let Some(pane) = model.visible_panes(term_rows).get(i) {
+            if let Some(pane) = model.panes.get(i) {
                 let pane_id = pane.pane_id.clone();
                 send_rpc(
                     ctrl_write,
@@ -384,7 +474,7 @@ async fn handle_mouse(
     Ok(())
 }
 
-fn apply_snapshot(model: &mut Model, snap: &Value, focused: Option<&str>) {
+fn apply_snapshot(model: &mut Model, funnel: &mut Funnel, snap: &Value, focused: Option<&str>) {
     let ws = model
         .workspace_id
         .clone()
@@ -392,6 +482,7 @@ fn apply_snapshot(model: &mut Model, snap: &Value, focused: Option<&str>) {
     let focused_id = model.focused_pane_id.clone();
     *model = Model::from_snapshot(snap, ws.as_deref());
     model.focused_pane_id = focused_id.or_else(|| focused.map(str::to_string));
+    funnel.sync_ids(model.panes.iter().map(|p| p.pane_id.clone()).collect());
 }
 
 fn workspace_of(snap: &Value, focused: Option<&str>) -> Option<String> {
@@ -533,6 +624,7 @@ fn paint(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     frame: Option<&Frame>,
     model: &Model,
+    funnel: &Funnel,
     mode: Mode,
     clear_pty: bool,
 ) -> io::Result<()> {
@@ -567,7 +659,7 @@ fn paint(
         if let Some(frame) = frame {
             paint_pty(buf, pty_area, frame);
         }
-        paint_sidebar(buf, side_area, model, mode);
+        paint_sidebar(buf, side_area, model, funnel, mode);
     })?;
     Ok(())
 }
@@ -598,7 +690,13 @@ fn paint_pty(buf: &mut ratatui::buffer::Buffer, area: Rect, frame: &Frame) {
     }
 }
 
-fn paint_sidebar(buf: &mut ratatui::buffer::Buffer, area: Rect, model: &Model, mode: Mode) {
+fn paint_sidebar(
+    buf: &mut ratatui::buffer::Buffer,
+    area: Rect,
+    model: &Model,
+    funnel: &Funnel,
+    mode: Mode,
+) {
     for y in 0..area.height {
         for x in 0..area.width {
             let dest = &mut buf[(area.x + x, area.y + y)];
@@ -606,36 +704,48 @@ fn paint_sidebar(buf: &mut ratatui::buffer::Buffer, area: Rect, model: &Model, m
             dest.set_symbol(" ");
         }
     }
-    let lines = sidebar::render_lines(model, area.height);
+    let lay = sidebar::layout(model, funnel, area.height);
     let focused = model.focused_pane_id.as_deref();
     let chrome = matches!(mode, Mode::Sidebar | Mode::Prompt | Mode::Drawer);
-    for (i, line) in lines.iter().enumerate() {
+    let selected = funnel.expanded();
+    for (i, line) in lay.lines.iter().enumerate() {
         let y = i as u16;
         if y >= area.height {
             break;
         }
-        let is_footer = y + 1 == area.height;
-        let is_pin = (i as usize) < model.pins.len() && !is_footer;
-        let pane_idx = i.saturating_sub(model.pins.len());
-        let is_focused_row = !is_footer
-            && !is_pin
-            && model
-                .panes
-                .get(pane_idx)
-                .is_some_and(|p| Some(p.pane_id.as_str()) == focused);
+        let slot = lay.slots.get(i).copied().unwrap_or(sidebar::Slot::Empty);
+        let pane_idx = match slot {
+            sidebar::Slot::Pane(p) => Some(p),
+            _ => None,
+        };
+        let is_focused_row = pane_idx
+            .and_then(|p| model.panes.get(p))
+            .is_some_and(|p| Some(p.pane_id.as_str()) == focused);
+        let is_selected = pane_idx == selected && selected.is_some();
         let mut style = Style::default().fg(Color::Gray);
-        if is_footer {
-            style = Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM);
-        } else if is_pin {
-            style = Style::default().fg(Color::Yellow);
-        } else if is_focused_row {
-            style = Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::REVERSED);
-        } else if chrome {
-            style = Style::default().fg(Color::White);
+        match slot {
+            sidebar::Slot::Prompt => {
+                style = Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::DIM);
+            }
+            sidebar::Slot::Pin => {
+                style = Style::default().fg(Color::Yellow);
+            }
+            sidebar::Slot::Pane(_) if is_selected && chrome => {
+                style = Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::REVERSED);
+            }
+            sidebar::Slot::Pane(_) if is_focused_row => {
+                style = Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::REVERSED);
+            }
+            sidebar::Slot::Pane(_) if chrome => {
+                style = Style::default().fg(Color::White);
+            }
+            _ => {}
         }
         put_line(buf, area, y, line, style);
     }
@@ -761,5 +871,70 @@ mod tests {
         assert_eq!(outcome, SnapOutcome::Failed);
         assert!(result.is_none());
         assert!(flight.idle());
+    }
+
+    #[test]
+    fn esc_collapses_drawer_then_overview_then_pty() {
+        let mut funnel = Funnel::new(vec!["a", "b"]);
+        let mut mode = Mode::Sidebar;
+        let (next, _) = chrome_key(mode, &mut funnel, keymap::Key::Char('j'));
+        mode = next;
+        assert_eq!(mode, Mode::Sidebar);
+        assert_eq!(funnel.expanded(), Some(0));
+
+        let (next, _) = chrome_key(mode, &mut funnel, keymap::Key::Enter);
+        mode = next;
+        assert_eq!(mode, Mode::Drawer);
+        assert!(funnel.drawer().is_some());
+
+        let (next, _) = chrome_key(mode, &mut funnel, keymap::Key::Esc);
+        mode = next;
+        assert_eq!(mode, Mode::Sidebar);
+        assert!(funnel.drawer().is_none());
+        assert_eq!(funnel.expanded(), Some(0));
+
+        let (next, _) = chrome_key(mode, &mut funnel, keymap::Key::Esc);
+        mode = next;
+        assert_eq!(mode, Mode::Sidebar);
+        assert!(funnel.expanded().is_none());
+
+        let (next, _) = chrome_key(mode, &mut funnel, keymap::Key::Esc);
+        mode = next;
+        assert_eq!(mode, Mode::Pty);
+    }
+
+    #[test]
+    fn printable_from_sidebar_seeds_pending_prompt() {
+        let mut funnel = Funnel::new(vec!["a"]);
+        let (mode, action) = chrome_key(Mode::Sidebar, &mut funnel, keymap::Key::Char('h'));
+        assert_eq!(mode, Mode::Prompt);
+        assert_eq!(action, Action::StartPrompt('h'));
+        assert_eq!(funnel.pending_prompt(), "h");
+    }
+
+    #[test]
+    fn snapshot_remap_keeps_funnel_client_local() {
+        let snap = json!({
+            "intel": { "up": true },
+            "panes": [
+                { "paneId": "p_a", "cwd": "/tmp/a", "state": "idle" },
+                { "paneId": "p_b", "cwd": "/tmp/b", "state": "idle" },
+            ],
+        });
+        let mut model = Model::from_snapshot(&snap, None);
+        let mut funnel = Funnel::new(model.panes.iter().map(|p| p.pane_id.clone()).collect());
+        funnel.select(1);
+        funnel.enter();
+        let snap2 = json!({
+            "intel": { "up": true },
+            "panes": [
+                { "paneId": "p_b", "cwd": "/tmp/b", "state": "idle" },
+                { "paneId": "p_c", "cwd": "/tmp/c", "state": "idle" },
+            ],
+        });
+        apply_snapshot(&mut model, &mut funnel, &snap2, None);
+        assert_eq!(funnel.expanded(), Some(0));
+        assert_eq!(funnel.drawer(), Some(0));
+        assert_eq!(model.panes[0].pane_id, "p_b");
     }
 }

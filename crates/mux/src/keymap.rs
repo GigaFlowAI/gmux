@@ -1,6 +1,7 @@
-//! Input-mode state machine. Funnel expansion is Task 7; prompt typing is Task 8.
+//! Input-mode state machine. Prompt typing is Task 8.
 //!
 //! From `pty`, intercept **only** `ctrl+t`, `ctrl+g`, `ctrl+q`. `/` is forwarded.
+//! In `sidebar`, `j`/`k` select; Enter dives; printables (including `/`) focus prompt.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -28,6 +29,11 @@ pub enum Action {
     Peel,
     /// Forward the original key bytes to this client's focused PTY.
     Forward,
+    SelectNext,
+    SelectPrev,
+    EnterDrawer,
+    /// Switch to prompt and seed Task 8 with this first character.
+    StartPrompt(char),
 }
 
 pub fn handle(mode: Mode, key: Key) -> (Mode, Action) {
@@ -42,6 +48,10 @@ pub fn handle(mode: Mode, key: Key) -> (Mode, Action) {
             Key::Esc => (Mode::Pty, Action::None),
             Key::Ctrl('g' | 'G') => (Mode::Pty, Action::None),
             Key::Ctrl('q' | 'Q') => (Mode::Sidebar, Action::Detach),
+            Key::Char('j') | Key::Down => (Mode::Sidebar, Action::SelectNext),
+            Key::Char('k') | Key::Up => (Mode::Sidebar, Action::SelectPrev),
+            Key::Enter => (Mode::Drawer, Action::EnterDrawer),
+            Key::Char(c) if !c.is_control() => (Mode::Prompt, Action::StartPrompt(c)),
             _ => (Mode::Sidebar, Action::None),
         },
         Mode::Prompt => match key {
@@ -54,6 +64,8 @@ pub fn handle(mode: Mode, key: Key) -> (Mode, Action) {
             Key::Esc => (Mode::Sidebar, Action::None),
             Key::Ctrl('g' | 'G') => (Mode::Pty, Action::None),
             Key::Ctrl('q' | 'Q') => (Mode::Drawer, Action::Detach),
+            Key::Char('j' | 'k') | Key::Up | Key::Down => (Mode::Drawer, Action::None),
+            Key::Char(c) if !c.is_control() => (Mode::Prompt, Action::StartPrompt(c)),
             _ => (Mode::Drawer, Action::None),
         },
     }
@@ -111,6 +123,62 @@ mod tests {
         assert_eq!(
             handle(Mode::Sidebar, Key::Ctrl('g')),
             (Mode::Pty, Action::None)
+        );
+    }
+
+    #[test]
+    fn sidebar_jk_select_enter_dives_printable_prompts() {
+        assert_eq!(
+            handle(Mode::Sidebar, Key::Char('j')),
+            (Mode::Sidebar, Action::SelectNext)
+        );
+        assert_eq!(
+            handle(Mode::Sidebar, Key::Char('k')),
+            (Mode::Sidebar, Action::SelectPrev)
+        );
+        assert_eq!(
+            handle(Mode::Sidebar, Key::Down),
+            (Mode::Sidebar, Action::SelectNext)
+        );
+        assert_eq!(
+            handle(Mode::Sidebar, Key::Up),
+            (Mode::Sidebar, Action::SelectPrev)
+        );
+        assert_eq!(
+            handle(Mode::Sidebar, Key::Enter),
+            (Mode::Drawer, Action::EnterDrawer)
+        );
+        assert_eq!(
+            handle(Mode::Sidebar, Key::Char('h')),
+            (Mode::Prompt, Action::StartPrompt('h'))
+        );
+        assert_eq!(
+            handle(Mode::Sidebar, Key::Char('/')),
+            (Mode::Prompt, Action::StartPrompt('/'))
+        );
+        assert_eq!(
+            handle(Mode::Sidebar, Key::Char(' ')),
+            (Mode::Prompt, Action::StartPrompt(' '))
+        );
+    }
+
+    #[test]
+    fn drawer_jk_ignored_printable_prompts() {
+        assert_eq!(
+            handle(Mode::Drawer, Key::Char('j')),
+            (Mode::Drawer, Action::None)
+        );
+        assert_eq!(
+            handle(Mode::Drawer, Key::Char('k')),
+            (Mode::Drawer, Action::None)
+        );
+        assert_eq!(
+            handle(Mode::Drawer, Key::Char('/')),
+            (Mode::Prompt, Action::StartPrompt('/'))
+        );
+        assert_eq!(
+            handle(Mode::Drawer, Key::Esc),
+            (Mode::Sidebar, Action::None)
         );
     }
 }
