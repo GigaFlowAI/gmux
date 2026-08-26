@@ -41,3 +41,16 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  mux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Separate from npm test: gmuxd (crates/mux) is the PTY runtime.
+      - name: Test gmuxd
+        run: cargo test -p gmuxd
