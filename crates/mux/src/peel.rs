@@ -6,7 +6,7 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::grid::GridSnapshot;
 use crate::session::{Mux, MuxError, SpawnOpts, Spawned, TabSpec};
@@ -17,6 +17,8 @@ const HARNESS_READY: Duration = Duration::from_secs(8);
 /// always stale — Claude paints the composer asynchronously.
 const CLEAR_POLL: Duration = Duration::from_millis(80);
 const CLEAR_TICK: Duration = Duration::from_millis(5);
+/// Keep in sync with `CONTEXT_PACK_BUDGET_MS` / `PACK_TIMEOUT_MS` (500).
+pub const PACK_TIMEOUT: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone)]
 pub struct PeelSpawn {
@@ -30,6 +32,8 @@ pub struct PeelSpawn {
 pub struct PeelSlowResult {
     pub submitted: bool,
     pub extractor: String,
+    /// Body written to the child before Enter. None when submit was skipped.
+    pub submitted_text: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +73,27 @@ impl ExtractReply {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExtractError {
+    Down,
+    Timeout,
+    Malformed,
+}
+
+#[derive(Debug, Clone)]
+pub struct PackReply {
+    pub text: String,
+}
+
+impl PackReply {
+    pub fn from_value(v: &Value) -> Option<Self> {
+        let text = v.get("text").and_then(Value::as_str)?;
+        Some(Self {
+            text: text.to_string(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackError {
     Down,
     Timeout,
     Malformed,
@@ -167,18 +192,31 @@ pub fn shadow_extractor(seed: &str) -> &'static str {
     if seed.is_empty() { "empty" } else { "shadow" }
 }
 
+fn skipped(extractor: String) -> PeelSlowResult {
+    PeelSlowResult {
+        submitted: false,
+        extractor,
+        submitted_text: None,
+    }
+}
+
 /// Slow path: extract (already timed out by the caller), clear parent, then submit.
 /// Never blocks the fast spawn. Clear then submit, never the reverse.
-pub async fn peel_slow<F, Fut>(
+/// Pack runs only after a successful clear (uncleared parent → pack dropped).
+/// 500 ms budget then seed+headline; a late pack is not a second submit.
+pub async fn peel_slow<F, Fut, P, PFut>(
     mux: Arc<Mutex<Mux>>,
     parent_id: String,
     child_id: String,
     seed0: String,
     extract: F,
+    pack: P,
 ) -> PeelSlowResult
 where
     F: FnOnce(Value) -> Fut,
     Fut: Future<Output = Result<ExtractReply, ExtractError>>,
+    P: FnOnce(Value) -> PFut,
+    PFut: Future<Output = Result<PackReply, PackError>>,
 {
     let grid = {
         let guard = mux.lock().expect("mux");
@@ -218,10 +256,7 @@ where
         if intel_down {
             mux.lock().expect("mux").toast("intel down");
         }
-        return PeelSlowResult {
-            submitted: false,
-            extractor,
-        };
+        return skipped(extractor);
     }
 
     let clear = if clear_keys.is_empty() {
@@ -244,33 +279,68 @@ where
             if intel_down {
                 guard.toast("intel down");
             }
-            return PeelSlowResult {
-                submitted: false,
-                extractor,
-            };
+            return skipped(extractor);
         }
     }
 
-    wait_harness_ready(&mux, &child_id).await;
+    let (pack_params, headline) = {
+        let guard = mux.lock().expect("mux");
+        (
+            pack_params(&guard, &parent_id, &seed),
+            parent_headline(&guard, &parent_id),
+        )
+    };
+    let pack_fut = pack(pack_params);
+    let ready_fut = wait_harness_ready(&mux, &child_id);
+    let (packed, _) = tokio::join!(tokio::time::timeout(PACK_TIMEOUT, pack_fut), ready_fut,);
+    let body = match packed {
+        Ok(Ok(reply)) if !reply.text.is_empty() => reply.text,
+        _ => seed_and_headline(&seed, headline.as_deref()),
+    };
+
     {
         let mut guard = mux.lock().expect("mux");
         if !guard.panes.contains_key(&child_id) {
-            return PeelSlowResult {
-                submitted: false,
-                extractor,
-            };
+            return skipped(extractor);
         }
-        if guard.send_keys(&child_id, &seed).is_err() {
-            return PeelSlowResult {
-                submitted: false,
-                extractor,
-            };
+        if guard.send_keys(&child_id, &body).is_err() {
+            return skipped(extractor);
         }
         let _ = guard.send_keys(&child_id, "\r");
     }
     PeelSlowResult {
         submitted: true,
         extractor,
+        submitted_text: Some(body),
+    }
+}
+
+fn pack_params(mux: &Mux, parent_id: &str, seed: &str) -> Value {
+    let pane = mux.panes.get(parent_id);
+    json!({
+        "parentPaneId": parent_id,
+        "seed": seed,
+        "harness": pane.and_then(|p| p.harness.clone()),
+        "sessionId": pane.and_then(|p| p.session_id.clone()),
+        "semantics": mux.patches.get(parent_id).and_then(|p| p.semantics.clone()),
+    })
+}
+
+fn parent_headline(mux: &Mux, parent_id: &str) -> Option<String> {
+    mux.patches
+        .get(parent_id)
+        .and_then(|p| p.semantics.as_ref())
+        .and_then(|s| s.get("label"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+fn seed_and_headline(seed: &str, headline: Option<&str>) -> String {
+    match headline.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(h) => format!("{seed}\n\n{h}"),
+        None => seed.to_string(),
     }
 }
 

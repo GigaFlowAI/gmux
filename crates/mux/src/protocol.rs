@@ -34,7 +34,6 @@ use tokio::net::unix::OwnedWriteHalf;
 
 /// Deadlines (ms) — keep in sync with `src/services/mux-client.ts`.
 const EXTRACT_TIMEOUT: Duration = Duration::from_millis(20);
-const PACK_TIMEOUT: Duration = Duration::from_millis(500);
 const CLASSIFY_TIMEOUT: Duration = Duration::from_millis(30_000);
 const ORGANIZE_TIMEOUT: Duration = Duration::from_millis(120_000);
 
@@ -127,13 +126,26 @@ impl IntelHub {
             Err(_) => Err(ExtractError::Down),
         }
     }
+
+    async fn pack(&self, params: Value) -> Result<crate::peel::PackReply, crate::peel::PackError> {
+        match self
+            .call("context.pack", params, crate::peel::PACK_TIMEOUT)
+            .await
+        {
+            Ok(v) => {
+                crate::peel::PackReply::from_value(&v).ok_or(crate::peel::PackError::Malformed)
+            }
+            Err(e) if e.code() == "timeout" => Err(crate::peel::PackError::Timeout),
+            Err(_) => Err(crate::peel::PackError::Down),
+        }
+    }
 }
 
 fn _deadline_table() {
     // Referenced so the table constants stay compiled in.
     let _ = (
         EXTRACT_TIMEOUT,
-        PACK_TIMEOUT,
+        crate::peel::PACK_TIMEOUT,
         CLASSIFY_TIMEOUT,
         ORGANIZE_TIMEOUT,
     );
@@ -575,7 +587,11 @@ async fn dispatch(
             }
         }),
         "tab.new" => gated(conn, req, "tab.new", |_| {
-            let name = req.params.get("name").and_then(Value::as_str).unwrap_or("tab");
+            let name = req
+                .params
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("tab");
             let workspace_id = req.params.get("workspaceId").and_then(Value::as_str);
             match mux.lock().expect("mux").new_tab(name, workspace_id) {
                 Ok(tab_id) => ok(&req.id, json!({ "tabId": tab_id })),
@@ -583,7 +599,11 @@ async fn dispatch(
             }
         }),
         "tab.rename" => gated(conn, req, "tab.rename", |_| {
-            let tab_id = req.params.get("tabId").and_then(Value::as_str).unwrap_or("");
+            let tab_id = req
+                .params
+                .get("tabId")
+                .and_then(Value::as_str)
+                .unwrap_or("");
             let name = req.params.get("name").and_then(Value::as_str).unwrap_or("");
             match mux.lock().expect("mux").rename_tab(tab_id, name) {
                 Ok(()) => ok(&req.id, json!({ "ok": true })),
@@ -591,8 +611,16 @@ async fn dispatch(
             }
         }),
         "pane.move" => gated(conn, req, "pane.move", |_| {
-            let src = req.params.get("srcPane").and_then(Value::as_str).unwrap_or("");
-            let dst = req.params.get("dstTab").and_then(Value::as_str).unwrap_or("");
+            let src = req
+                .params
+                .get("srcPane")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let dst = req
+                .params
+                .get("dstTab")
+                .and_then(Value::as_str)
+                .unwrap_or("");
             match mux.lock().expect("mux").move_pane(src, dst) {
                 Ok(()) => ok(&req.id, json!({ "ok": true })),
                 Err(err) => err_of(&req.id, &err),
@@ -733,11 +761,7 @@ async fn handle_hello(
             Ok(pid) => {
                 guard.intel_pid = Some(pid);
                 guard.intel_connected = true;
-                if let Some(argv) = req
-                    .params
-                    .get("agentHarness")
-                    .and_then(Value::as_array)
-                {
+                if let Some(argv) = req.params.get("agentHarness").and_then(Value::as_array) {
                     let argv: Vec<String> = argv
                         .iter()
                         .filter_map(|v| v.as_str().map(str::to_string))
@@ -798,16 +822,12 @@ async fn handle_peel(
         {
             crate::peel::peel_spawn(&mut guard, pane_id, conn.client_id.as_deref())
         } else if let Ok(CallerClass::Tui) = conn.class {
-            let Some(client_id) = conn
-                .client_id
-                .clone()
-                .or_else(|| {
-                    req.params
-                        .get("clientId")
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                })
-            else {
+            let Some(client_id) = conn.client_id.clone().or_else(|| {
+                req.params
+                    .get("clientId")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            }) else {
                 return error(
                     &req.id,
                     "invalid_request",
@@ -823,11 +843,7 @@ async fn handle_peel(
                 .and_then(Value::as_str)
                 .map(str::to_string)
                 .or_else(|| conn.client_id.clone())
-                .and_then(|id| {
-                    guard
-                        .focused(&id)
-                        .map(str::to_string)
-                })
+                .and_then(|id| guard.focused(&id).map(str::to_string))
                 .or_else(|| guard.last_tui_focus());
             let Some(parent) = parent else {
                 return error(
@@ -872,10 +888,22 @@ async fn handle_peel(
     let mux2 = mux.clone();
     let hub2 = hub.clone();
     if wait_slow {
-        let slow = crate::peel::peel_slow(mux2, parent_id, child_id.clone(), seed0, |grid| {
-            let hub = hub2.clone();
-            async move { hub.extract(grid).await }
-        })
+        let hub_ex = hub2.clone();
+        let hub_pk = hub2.clone();
+        let slow = crate::peel::peel_slow(
+            mux2,
+            parent_id,
+            child_id.clone(),
+            seed0,
+            move |grid| {
+                let hub = hub_ex.clone();
+                async move { hub.extract(grid).await }
+            },
+            move |params| {
+                let hub = hub_pk.clone();
+                async move { hub.pack(params).await }
+            },
+        )
         .await;
         return ok(
             &req.id,
@@ -889,10 +917,22 @@ async fn handle_peel(
     }
 
     tokio::spawn(async move {
-        let _ = crate::peel::peel_slow(mux2, parent_id, child_id, seed0, |grid| {
-            let hub = hub2.clone();
-            async move { hub.extract(grid).await }
-        })
+        let hub_ex = hub2.clone();
+        let hub_pk = hub2.clone();
+        let _ = crate::peel::peel_slow(
+            mux2,
+            parent_id,
+            child_id,
+            seed0,
+            move |grid| {
+                let hub = hub_ex.clone();
+                async move { hub.extract(grid).await }
+            },
+            move |params| {
+                let hub = hub_pk.clone();
+                async move { hub.pack(params).await }
+            },
+        )
         .await;
     });
     ok(

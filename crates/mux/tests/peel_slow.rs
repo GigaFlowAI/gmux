@@ -187,3 +187,98 @@ async fn fast_peel_does_not_wait_on_extract() {
     let _ = h.peel("c1").await.unwrap();
     assert!(t0.elapsed() < std::time::Duration::from_millis(50));
 }
+
+#[tokio::test]
+async fn pack_text_is_submitted_when_cleared() {
+    use gmuxd::peel::PackReply;
+    let h = harness::start().await;
+    let parent = h.spawn_shell("/tmp").await;
+    h.set_client_focus("c1", &parent.pane_id);
+    h.set_shadow(&parent.pane_id, "also fix the webhook");
+    let spawned = h.peel_spawn("c1").unwrap();
+    let slow = h
+        .peel_slow_pack(
+            &spawned.parent_id,
+            &spawned.spawned.pane_id,
+            &spawned.seed0,
+            Ok(reply("also fix the webhook", "claude-code")),
+            |_params| async move {
+                Ok(PackReply {
+                    text: "PACK BODY".into(),
+                })
+            },
+        )
+        .await;
+    assert!(slow.submitted);
+    assert_eq!(slow.submitted_text.as_deref(), Some("PACK BODY"));
+}
+
+#[tokio::test]
+async fn pack_timeout_submits_seed_and_headline() {
+    use gmuxd::peel::PackReply;
+    let h = harness::start().await;
+    let parent = h.spawn_shell("/tmp").await;
+    h.set_client_focus("c1", &parent.pane_id);
+    h.set_shadow(&parent.pane_id, "also fix the webhook");
+    h.report_semantics(
+        &parent.pane_id,
+        "working",
+        serde_json::json!({"label": "wiring checkout"}),
+    );
+    let spawned = h.peel_spawn("c1").unwrap();
+    let slow = h
+        .peel_slow_pack(
+            &spawned.parent_id,
+            &spawned.spawned.pane_id,
+            &spawned.seed0,
+            Ok(reply("also fix the webhook", "claude-code")),
+            |_params| async move {
+                tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                Ok(PackReply {
+                    text: "LATE PACK SHOULD NOT APPEAR".into(),
+                })
+            },
+        )
+        .await;
+    assert!(slow.submitted);
+    let text = slow.submitted_text.expect("submitted");
+    assert!(text.contains("also fix the webhook"));
+    assert!(text.contains("wiring checkout"));
+    assert!(!text.contains("LATE PACK"));
+}
+
+#[tokio::test]
+async fn uncleared_parent_drops_the_pack() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let called = Arc::new(AtomicBool::new(false));
+    let h = harness::start().await;
+    let parent = h.spawn_shell("/tmp").await;
+    h.set_client_focus("c1", &parent.pane_id);
+    h.set_shadow(&parent.pane_id, "also fix the webhook");
+    h.feed_grid(
+        &parent.pane_id,
+        "│ > also fix the webhook                       │".as_bytes(),
+    );
+    let spawned = h.peel_spawn("c1").unwrap();
+    let flag = called.clone();
+    let slow = h
+        .peel_slow_pack(
+            &spawned.parent_id,
+            &spawned.spawned.pane_id,
+            &spawned.seed0,
+            Ok(reply("also fix the webhook", "claude-code")),
+            move |_params| {
+                flag.store(true, Ordering::SeqCst);
+                async move {
+                    Ok(gmuxd::peel::PackReply {
+                        text: "PACK MUST NOT SUBMIT".into(),
+                    })
+                }
+            },
+        )
+        .await;
+    assert!(!slow.submitted);
+    assert!(slow.submitted_text.is_none());
+    assert!(!called.load(Ordering::SeqCst), "pack must be dropped");
+}

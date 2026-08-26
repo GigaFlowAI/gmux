@@ -96,6 +96,30 @@ impl Harness {
             child_id.to_string(),
             seed0.to_string(),
             move |_grid| async move { extracted },
+            |_params| async move { Err(gmuxd::peel::PackError::Timeout) },
+        )
+        .await
+    }
+
+    pub async fn peel_slow_pack<P, PFut>(
+        &self,
+        parent_id: &str,
+        child_id: &str,
+        seed0: &str,
+        extracted: Result<gmuxd::peel::ExtractReply, gmuxd::peel::ExtractError>,
+        pack: P,
+    ) -> gmuxd::peel::PeelSlowResult
+    where
+        P: FnOnce(serde_json::Value) -> PFut,
+        PFut: std::future::Future<Output = Result<gmuxd::peel::PackReply, gmuxd::peel::PackError>>,
+    {
+        gmuxd::peel::peel_slow(
+            self.mux.clone(),
+            parent_id.to_string(),
+            child_id.to_string(),
+            seed0.to_string(),
+            move |_grid| async move { extracted },
+            pack,
         )
         .await
     }

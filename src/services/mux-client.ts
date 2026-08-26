@@ -30,10 +30,16 @@ import { intelTokenPath, muxSocketPath } from "../core/paths.js";
 import { CLASSIFY_TIMEOUT_MS, classifyIntent, type AskIntent } from "./ask-router.js";
 import type { MuxGateway } from "./mux-gateway.js";
 import { HeuristicOrganizePlanner, LlmOrganizePlanner, ORGANIZE_TIMEOUT_MS } from "./organize.js";
+import {
+  CONTEXT_PACK_BUDGET_MS,
+  packFromParams,
+  serializePack,
+  type PackLookup,
+} from "./context-pack.js";
 import { extractFromParams } from "./prompt-extract.js";
 
 export const EXTRACT_TIMEOUT_MS = 20;
-export const PACK_TIMEOUT_MS = 500;
+export const PACK_TIMEOUT_MS = CONTEXT_PACK_BUDGET_MS;
 export { CLASSIFY_TIMEOUT_MS, ORGANIZE_TIMEOUT_MS };
 
 export const INTEL_METHODS = [
@@ -81,7 +87,7 @@ function isIntelMethod(method: string): method is IntelMethod {
   return (INTEL_METHODS as readonly string[]).includes(method);
 }
 
-/** Default stubs — extract/pack stay stubbed; classify/plan are live via `liveIntelHandlers`. */
+/** Default stubs — extract/pack stay stubbed unless `liveIntelHandlers` is used. */
 export function stubIntelHandlers(): IntelHandlers {
   return {
     "prompt.extract": async () => ({
@@ -90,7 +96,7 @@ export function stubIntelHandlers(): IntelHandlers {
       clearKeys: "\u0015",
       extractor: "shadow",
     }),
-    "context.pack": async () => ({ headline: "", seed: "" }),
+    "context.pack": async () => ({ headline: "", seed: "", text: "" }),
     "organize.plan": async () => ({ schemaVersion: 2, steps: [] }),
     "classify.intent": async () => ({ intent: "ask" }),
   };
@@ -136,18 +142,22 @@ function readOrganizePanes(params: unknown): OrganizePane[] {
 }
 
 /**
- * Live classify.intent / organize.plan. Mux originates these because the user
- * typed in the gmux prompt (or `gmux organize` planned locally). They never
- * run on a timer — the sidecar tick does not call them.
+ * Live extract/pack/classify/plan. Mux originates these; they never run on a
+ * timer — the sidecar tick does not call them. Pack is cache-only (no JSONL).
  */
 export function liveIntelHandlers(opts: {
   classify?: (prompt: string) => Promise<AskIntent>;
   planner?: OrganizePlanner;
+  packLookup?: PackLookup;
 } = {}): IntelHandlers {
   const classify = opts.classify ?? ((prompt: string) => classifyIntent(prompt));
   const planner = opts.planner ?? new LlmOrganizePlanner(new HeuristicOrganizePlanner());
   return {
     "prompt.extract": async (params) => extractFromParams(params),
+    "context.pack": async (params) => {
+      const pack = await packFromParams(params, opts.packLookup);
+      return { ...pack, text: serializePack(pack) };
+    },
     "classify.intent": async (params) => {
       const prompt = readPromptParam(params);
       const intent = await classify(prompt);
