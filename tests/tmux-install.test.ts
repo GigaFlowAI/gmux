@@ -13,9 +13,7 @@ import {
   inspectTmuxBindings,
   installTmuxBindings,
   maybeInstallTmuxBindings,
-  maybeUninstallTmuxBindings,
   removeBlock,
-  tmuxInstallDeprecation,
   resolveTmuxConfPath,
   stripManagedBlocks,
   uninstallTmuxBindings,
@@ -298,34 +296,5 @@ describe("maybeInstallTmuxBindings", () => {
     expect(asked).toEqual([]);
     expect(result.didInstall).toBe(false);
     expect(result.path).toBe(join(home, ".tmux.conf"));
-  });
-});
-
-describe("tmux install deprecation", () => {
-  it("prints a redirect to gmux attach and uninstall", () => {
-    const msg = tmuxInstallDeprecation();
-    expect(msg).toMatch(/gmux attach/);
-    expect(msg).toMatch(/gmux tmux uninstall/);
-    expect(msg).toMatch(/Ghostty|iTerm/);
-  });
-
-  it("maybeUninstallTmuxBindings defaults to no and still strips when accepted", async () => {
-    const home = await mkdtemp(join(tmpdir(), "gmux-tmux-"));
-    await installTmuxBindings(home);
-    const declined = await maybeUninstallTmuxBindings({
-      available: true,
-      ask: async (_q, fallback) => fallback,
-      home,
-    });
-    expect(declined).toEqual({ didUninstall: false });
-    expect(await readFile(join(home, ".tmux.conf"), "utf8")).toContain(BLOCK_START);
-
-    const accepted = await maybeUninstallTmuxBindings({
-      available: true,
-      ask: async () => true,
-      home,
-    });
-    expect(accepted).toEqual({ didUninstall: true });
-    expect(await readFile(join(home, ".tmux.conf"), "utf8")).not.toContain(BLOCK_START);
   });
 });

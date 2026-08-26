@@ -10,7 +10,6 @@ import { homedir } from "node:os";
 import { createInterface, type Interface } from "node:readline/promises";
 import type { Command } from "commander";
 
-import { allAdapters } from "../../adapters/registry.js";
 import { GmuxError } from "../../core/errors.js";
 import { DEFAULT_GMUX_CONFIG, type GuardianPolicy } from "../../core/gmux-types.js";
 import { configPath } from "../../core/paths.js";
@@ -23,7 +22,7 @@ import {
   type ProviderSpec,
 } from "../../services/providers.js";
 import { parseCommand, readConfig, writeConfig } from "../../services/config.js";
-import { maybeUninstallTmuxBindings } from "./tmux.js";
+import { maybeInstallTmuxBindings } from "./tmux.js";
 import { bold, cyan, dim, green, yellow } from "../format.js";
 
 /** One selectable answer to "which provider?". */
@@ -74,59 +73,6 @@ export function buildOptions(): Option[] {
   });
 
   return options;
-}
-
-/**
- * Interactive harness for peel/spawn — never `provider.summaryArgv`.
- * `command` is the adapter `launchCommand` (e.g. `claude`), not `claude -p`.
- */
-export function buildAgentHarnessOptions(): Option[] {
-  const options: Option[] = allAdapters().map((adapter) => {
-    const installed = onPath(adapter.launchCommand);
-    return {
-      label: adapter.displayName,
-      detail: installed ? adapter.launchCommand : `not installed — ${adapter.launchCommand} on PATH`,
-      choose: async () => ({ id: adapter.id, command: [adapter.launchCommand] }),
-    };
-  });
-
-  options.push({
-    label: "Something else",
-    detail: "any interactive CLI to exec in a new pane",
-    choose: async (rl) => {
-      for (;;) {
-        const raw = (await rl.question(`\n  command (e.g. ${dim("claude")}): `)).trim();
-        const command = parseCommand(raw);
-        if (command.length > 0) return { id: CUSTOM_PROVIDER_ID, command };
-        process.stdout.write(`  ${yellow("A command is required.")}\n`);
-      }
-    },
-  });
-
-  options.push({
-    label: "Nothing — peel and spawn use $SHELL",
-    detail: "no default agent; sidebar says `no agent harness — gmux setup`",
-    choose: async () => null,
-  });
-
-  return options;
-}
-
-/** Assemble a v1 config. `agentHarness` is omitted when the user picked nothing. */
-export function buildSetupConfig(input: {
-  provider: ProviderChoice | null;
-  agentHarness: ProviderChoice | null;
-  autoSummarize: boolean;
-  guardianPolicy: GuardianPolicy;
-}): GmConfig {
-  const config: GmConfig = {
-    version: CONFIG_VERSION,
-    provider: input.provider,
-    autoSummarize: input.autoSummarize,
-    gmux: { ...DEFAULT_GMUX_CONFIG, guardianPolicy: input.guardianPolicy },
-  };
-  if (input.agentHarness) config.agentHarness = input.agentHarness;
-  return config;
 }
 
 /**
@@ -261,42 +207,6 @@ export async function runSetupWizard(options: { firstRun?: boolean } = {}): Prom
     }
     const guardianPolicy = await askGuardianPolicy(rl);
 
-    if (existing?.agentHarness) {
-      process.stdout.write(`${dim(`agentHarness currently: ${existing.agentHarness.command.join(" ")}`)}\n`);
-    }
-    process.stdout.write(`\n${bold("Which interactive harness should new panes and peels launch?")}\n`);
-    process.stdout.write(
-      `${dim("Not the summarizer (`provider`). This is the CLI `gmux attach` execs in a new pane.")}\n\n`,
-    );
-
-    const harnessMenu = buildAgentHarnessOptions();
-    const adapters = allAdapters();
-    const existingHarnessIdx = existing?.agentHarness
-      ? harnessMenu.findIndex((_, i) => adapters[i]?.id === existing.agentHarness?.id)
-      : -1;
-    const firstInstalledHarness = harnessMenu.findIndex((_, i) => {
-      const adapter = adapters[i];
-      return adapter ? onPath(adapter.launchCommand) : false;
-    });
-    const harnessFallback =
-      existingHarnessIdx >= 0
-        ? existingHarnessIdx + 1
-        : firstInstalledHarness === -1
-          ? harnessMenu.length
-          : firstInstalledHarness + 1;
-
-    for (const [i, option] of harnessMenu.entries()) {
-      const adapter = adapters[i];
-      const installed = adapter ? onPath(adapter.launchCommand) : true;
-      const mark = adapter ? (installed ? green("✓") : dim("○")) : dim(" ");
-      process.stdout.write(
-        `  ${mark} ${String(i + 1)}. ${bold(option.label)}  ${dim(option.detail)}\n`,
-      );
-    }
-
-    const harnessPicked = harnessMenu[(await askChoice(rl, harnessMenu, harnessFallback)) - 1]!;
-    const agentHarness = await harnessPicked.choose(rl);
-
     // Only worth asking when there is something to call. "None" already answered it.
     const autoSummarize = provider
       ? await askYesNo(
@@ -308,7 +218,12 @@ export async function runSetupWizard(options: { firstRun?: boolean } = {}): Prom
         )
       : false;
 
-    const config = buildSetupConfig({ provider, agentHarness, autoSummarize, guardianPolicy });
+    const config: GmConfig = {
+      version: CONFIG_VERSION,
+      provider,
+      autoSummarize,
+      gmux: { ...DEFAULT_GMUX_CONFIG, guardianPolicy },
+    };
     await writeConfig(config);
 
     process.stdout.write(`\n${green("✓")} ${dim(`saved to ${configPath()}`)}\n`);
@@ -317,27 +232,23 @@ export async function runSetupWizard(options: { firstRun?: boolean } = {}): Prom
         ? `${dim("gmux will call")} ${cyan(provider.command.join(" "))}${dim(". Change it any time with `gmux setup`.")}\n\n`
         : `${dim("gmux will make no model calls. Run `gmux setup` if you change your mind.")}\n\n`,
     );
-    process.stdout.write(`${dim(`guardian: ${guardianPolicy}. Change it any time with \`gmux setup\`.`)}\n`);
-    process.stdout.write(
-      agentHarness
-        ? `${dim("agentHarness:")} ${cyan(agentHarness.command.join(" "))}${dim(". Not the summarizer.")}\n\n`
-        : `${dim("agentHarness: none — peel/spawn uses $SHELL until you pick one.")}\n\n`,
-    );
+    process.stdout.write(`${dim(`guardian: ${guardianPolicy}. Change it any time with \`gmux setup\`.`)}\n\n`);
 
-    const tmux = await maybeUninstallTmuxBindings({
+    const tmux = await maybeInstallTmuxBindings({
       available: onPath("tmux"),
       ask: (question, fallback) => askYesNo(rl, question, fallback),
       home: homedir(),
     });
-    if (tmux.didUninstall) {
-      process.stdout.write(`${green("✓")} ${dim("removed tmux bindings from ~/.tmux.conf and ~/.tmux.conf.local")}\n`);
-      process.stdout.write(`${dim("reload with `tmux source-file ~/.tmux.conf`.")}\n\n`);
+    if (tmux.didInstall && tmux.path) {
+      process.stdout.write(`${green("✓")} ${dim(`tmux bindings saved to ${tmux.path}`)}\n`);
+      process.stdout.write(
+        `${dim("reload with `tmux source-file ~/.tmux.conf`; then ctrl-g pulls up the cockpit.")}\n\n`,
+      );
     }
 
     process.stdout.write(
-      `${dim("If ctrl+t opens a native tab in iTerm/Ghostty, unbind it there — gmux keeps ctrl+t (ctrl+shift+t is an alias).")}\n`,
+      `${dim("Start the workspace daemon with `gmux daemon` (leave it running). Nothing autostarts.")}\n\n`,
     );
-    process.stdout.write(`${dim("Open Ghostty or iTerm and run `gmux attach`. Nothing autostarts.")}\n\n`);
 
     return config;
   } finally {
@@ -348,7 +259,7 @@ export async function runSetupWizard(options: { firstRun?: boolean } = {}): Prom
 export function registerSetup(program: Command): void {
   program
     .command("setup")
-    .description("choose the summarizer, guardian policy, and interactive agentHarness")
+    .description("choose the harness gmux uses for model calls, the guardian policy, and tmux bindings")
     .action(async () => {
       await runSetupWizard();
     });

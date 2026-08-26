@@ -10,8 +10,6 @@
 import { describe, expect, it } from "vitest";
 
 import { buildClassifyPrompt, classifyIntent, parseIntent } from "../src/services/ask-router.js";
-import { liveIntelHandlers } from "../src/services/mux-client.js";
-import { HeuristicOrganizePlanner } from "../src/services/organize.js";
 
 function providerArgv(script: string): string[] {
   return [process.execPath, "-e", script];
@@ -69,43 +67,7 @@ describe("classifyIntent", () => {
   });
 
   it("passes the prompt through to the classifier prompt body", () => {
-    expect(buildClassifyPrompt("tidy the tabs")).toContain("Message: tidy the tabs");
+    expect(buildClassifyPrompt("tidy the windows")).toContain("Message: tidy the windows");
     expect(buildClassifyPrompt("x")).toContain("exactly one word");
-    expect(buildClassifyPrompt("x")).toContain("tabs");
-  });
-});
-
-describe("liveIntelHandlers", () => {
-  it("classify.intent defaults to ask on the injected classifier", async () => {
-    const handlers = liveIntelHandlers({ classify: async () => "ask" });
-    await expect(handlers["classify.intent"]!({ prompt: "what is broken?" })).resolves.toEqual({ intent: "ask" });
-  });
-
-  it("classify.intent returns organize only when the classifier says so", async () => {
-    const handlers = liveIntelHandlers({ classify: async () => "organize" });
-    await expect(handlers["classify.intent"]!({ prompt: "group these by project" })).resolves.toEqual({
-      intent: "organize",
-    });
-  });
-
-  it("organize.plan returns schemaVersion 2 with grouping ops only", async () => {
-    const handlers = liveIntelHandlers({ planner: new HeuristicOrganizePlanner() });
-    const plan = (await handlers["organize.plan"]!({
-      prompt: "group by project",
-      panes: [
-        {
-          paneId: "p_A",
-          tabId: null,
-          cwd: "/r/web",
-          command: "claude",
-          harness: "claude-code",
-          state: "working",
-          label: null,
-          active: false,
-        },
-      ],
-    })) as { schemaVersion: number; steps: Array<{ op: string }> };
-    expect(plan.schemaVersion).toBe(2);
-    expect(plan.steps.every((s) => ["new-tab", "rename-tab", "move-pane", "break-pane"].includes(s.op))).toBe(true);
   });
 });

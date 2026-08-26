@@ -15,11 +15,9 @@
  *    without being told about a new file.
  */
 
-import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 
-import { allAdapters } from "../adapters/registry.js";
 import { configPath } from "../core/paths.js";
 import { DEFAULT_GMUX_CONFIG, type GuardianPolicy, type GmuxConfig } from "../core/gmux-types.js";
 import { CONFIG_VERSION, type GmConfig, type ProviderChoice } from "../core/types.js";
@@ -30,9 +28,6 @@ export const FALLBACK_COMMAND: readonly string[] = ["claude", "-p"];
 
 /** The env var that outranks everything here. */
 export const SUMMARY_CMD_ENV = "GMUX_SUMMARY_CMD";
-
-/** Interactive harness for peel/spawn. Never the summarizer. */
-export const AGENT_HARNESS_ENV = "GMUX_AGENT_HARNESS";
 
 /**
  * Set on any `gmux` we spawn ourselves.
@@ -105,20 +100,7 @@ export function parseConfig(raw: string): GmConfig | null {
   // file. resolveGmuxConfig fills in whatever this leaves out.
   const gmux = parseGmuxBlock(object["gmux"]);
 
-  let agentHarness: ProviderChoice | undefined;
-  if ("agentHarness" in object) {
-    const parsedHarness = parseProvider(object["agentHarness"]);
-    if (!parsedHarness) return null;
-    agentHarness = parsedHarness;
-  }
-
-  return {
-    version,
-    provider,
-    autoSummarize: object["autoSummarize"],
-    ...(agentHarness ? { agentHarness } : {}),
-    ...(gmux ? { gmux } : {}),
-  };
+  return { version, provider, autoSummarize: object["autoSummarize"], ...(gmux ? { gmux } : {}) };
 }
 
 /**
@@ -342,39 +324,6 @@ export function resolveAskCommand(
  */
 export function autoSummarizeAllowed(config: GmConfig | null): boolean {
   return config ? config.autoSummarize : true;
-}
-
-/**
- * Interactive harness argv for peel/spawn. Never `provider` (that is `claude -p`).
- *
- * Highest wins:
- *   1. GMUX_AGENT_HARNESS
- *   2. config.agentHarness if its command is on PATH
- *   3. first adapter whose launchCommand is on PATH
- *   4. null — caller execs $SHELL
- */
-export function resolveAgentHarness(
-  config: GmConfig | null,
-  env: NodeJS.ProcessEnv = process.env,
-): string[] | null {
-  const override = env[AGENT_HARNESS_ENV];
-  if (override && override.trim() !== "") return parseCommand(override);
-
-  if (config?.agentHarness) {
-    const cmd = config.agentHarness.command[0];
-    if (cmd && commandOnPath(cmd, env)) return [...config.agentHarness.command];
-  }
-
-  for (const adapter of allAdapters()) {
-    if (commandOnPath(adapter.launchCommand, env)) return [adapter.launchCommand];
-  }
-  return null;
-}
-
-function commandOnPath(cmd: string, env: NodeJS.ProcessEnv): boolean {
-  if (cmd.includes("/") || cmd.includes("\\")) return existsSync(cmd);
-  const path = env.PATH ?? env.Path ?? "";
-  return path.split(":").some((dir) => dir !== "" && existsSync(join(dir, cmd)));
 }
 
 /**

@@ -1,13 +1,11 @@
 /**
- * The organize confirm-state for the gmux prompt (sidebar drawer) and the
- * ctrl-g cockpit. Pure string layout and pure key classification — callers
- * own the terminal and the async plan, and call these to render the preview
- * and to interpret a keystroke.
+ * The organize confirm-state for the ctrl-g cockpit prompt. Pure string layout
+ * and pure key classification — the command owns the terminal and the async
+ * plan, and calls these to render the preview and to interpret a keystroke.
  *
- * When a prompt classifies as a reorganization, the drawer shows the numbered
- * plan and waits for the user to confirm. NOTHING is applied without that
- * confirmation — this is the preview half of preview-then-apply. Dry-run is
- * the default. The TUI mirrors `makeGeneration` / `confirmKey` in rust.
+ * When the cockpit prompt classifies as a reorganization, the cockpit shows the
+ * numbered plan and waits for the user to confirm. NOTHING is applied without
+ * that confirmation — this is the preview half of preview-then-apply.
  */
 
 import { organizePreviewLines, type OrganizePlan } from "../core/organize-types.js";

@@ -4,7 +4,6 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 import { FakeTmuxGateway } from "./fixtures/fake-gateway.js";
-import { FakeMuxGateway } from "../src/services/mux-gateway.js";
 import {
   AgentSensor,
   hasToolError,
@@ -15,7 +14,6 @@ import {
   tsOf,
 } from "../src/services/sensors.js";
 import type { PaneIdentity } from "../src/core/gmux-types.js";
-import { claudeBashToolUse, codexShellFunctionCall } from "./fixtures/build.js";
 
 const ident: PaneIdentity = {
   paneId: "%1", windowId: "@1", active: false, harness: null, sessionId: null,
@@ -32,32 +30,6 @@ describe("TerminalSensor", () => {
     expect(obs.tailLines).toEqual(["line a", "line b"]);
     expect(obs.lastActivityTs).toBe(5000);
   });
-  it("on MuxGateway uses readGrid and does not startPipe", async () => {
-    const gw = new FakeMuxGateway();
-    const spawned = await gw.spawn({ cwd: "/x", argv: ["zsh"] });
-    gw.setGrid(spawned.paneId, {
-      paneId: spawned.paneId,
-      cols: 80,
-      rows: 24,
-      lines: [
-        { text: "line a", intensity: [1, 1, 1, 1, 1, 1] },
-        { text: "line b", intensity: [1, 1, 1, 1, 1, 1] },
-      ],
-      alternateScreen: false,
-      foregroundCommand: "zsh",
-    });
-    const muxIdent: PaneIdentity = {
-      paneId: spawned.paneId, windowId: null, active: false, harness: null, sessionId: null,
-      cwd: "/x", command: "zsh", pid: 10, tabId: spawned.tabId,
-    };
-    const s = new TerminalSensor(muxIdent, gw);
-    const obs = await s.observe(5000);
-    expect(obs.kind).toBe("terminal");
-    expect(obs.tailLines).toEqual(["line a", "line b"]);
-    expect(obs.toolStarts).toEqual([]);
-    expect("startPipe" in gw).toBe(false);
-  });
-
   it("only bumps lastActivityTs when the content changes", async () => {
     const gw = new FakeTmuxGateway();
     gw.setCapture("%1", "same");
@@ -143,32 +115,7 @@ describe("AgentSensor", () => {
     expect(obs.awaitingInput).toBe(true);
     expect(obs.sawError).toBe(false);
     expect(obs.ended).toBe(false);
-    expect(obs.toolStarts).toEqual([]);
     await sensor.teardown();
-  });
-
-  it("fills toolStarts from Claude Bash tool_use and Codex shell function_call", async () => {
-    dir = await mkdtemp(join(tmpdir(), "gmux-sensors-"));
-    const filePath = join(dir, "session.jsonl");
-    const rows = [
-      claudeBashToolUse({ id: "toolu_bash", command: "vitest run" }),
-      { type: "user", timestamp: "2026-08-25T12:00:01.000Z", message: { content: [{ type: "tool_result", is_error: true }] } },
-      codexShellFunctionCall({ callId: "call_shell", cmd: "npm run dev" }),
-    ];
-    await writeFile(filePath, rows.map((r) => JSON.stringify(r)).join("\n") + "\n", "utf8");
-    const identity: PaneIdentity = {
-      paneId: "p_agent", windowId: null, active: true, harness: "claude-code", sessionId: "s1",
-      cwd: "/x", command: "claude", pid: 20,
-    };
-    const sensor = new AgentSensor(identity, filePath);
-    const first = await sensor.observe(1);
-    expect(first.toolStarts).toEqual([
-      { callId: "toolu_bash", command: "vitest run", paneId: "p_agent" },
-      { callId: "call_shell", command: "npm run dev", paneId: "p_agent" },
-    ]);
-    expect(first.sawError).toBe(true);
-    const second = await sensor.observe(2);
-    expect(second.toolStarts).toEqual([]);
   });
 
   it("degrades gracefully when the transcript file does not exist", async () => {

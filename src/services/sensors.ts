@@ -3,8 +3,8 @@
  * shape.
  *
  * `TerminalSensor` watches a plain shell (or any harness we can't identify a
- * transcript for). On tmux: `capture-pane` plus a `pipe-pane` log. On mux
- * (sidecar): `readGrid` → `lines[].text`; no `startPipe`.
+ * transcript for) via tmux `capture-pane`, and keeps a `pipe-pane` log running
+ * so a later "show me the raw tail" view has more than 200 lines to work with.
  * `AgentSensor` watches a known harness's transcript file directly — richer
  * and cheaper than scraping a terminal, but only available once the pane is
  * linked to a session.
@@ -21,16 +21,7 @@ import { paneLogPath } from "../core/paths.js";
 import { readJsonl, RingBuffer } from "../adapters/jsonl.js";
 import { cachedRecords } from "./index-store.js";
 import { rotateIfLarge, pruneLog, MAX_PANE_LOG_BYTES } from "./log-rotation.js";
-import type { MuxGateway } from "./mux-gateway.js";
-import { parseToolStarts, rememberCallId } from "./templates.js";
 import type { TmuxGateway } from "./tmux-gateway.js";
-
-/** Terminal capture: tmux `capture`/`pipe-pane`, or mux `readGrid`. */
-export type TerminalGateway = TmuxGateway | MuxGateway;
-
-function isMuxGateway(gateway: TerminalGateway): gateway is MuxGateway {
-  return "readGrid" in gateway;
-}
 
 /** How many transcript rows AgentSensor keeps in view per observe(). */
 const AGENT_TAIL_CAPACITY = 40;
@@ -56,45 +47,33 @@ export class TerminalSensor implements Sensor {
   private lastActivityTs = 0;
   private piping = false;
 
-  constructor(private readonly identity: PaneIdentity, private readonly gateway: TerminalGateway) {}
+  constructor(private readonly identity: PaneIdentity, private readonly gateway: TmuxGateway) {}
 
   async observe(now: number): Promise<Observation> {
-    let tailLines: string[];
-    if (isMuxGateway(this.gateway)) {
-      // Sidecar path: VTE grid text. No pipe-pane — mux owns the PTY.
-      const grid = await this.gateway.readGrid(this.identity.paneId);
-      tailLines = grid.lines.map((l) => l.text).filter((l) => l.length > 0);
-    } else {
-      if (!this.piping) {
-        await this.gateway.startPipe(this.identity.paneId, paneLogPath(this.identity.paneId)).catch(() => {});
-        this.piping = true;
-      }
-      const text = await this.gateway.capture(this.identity.paneId, 200);
-      tailLines = text.split("\n").filter((l) => l.length > 0);
-      await rotateIfLarge(paneLogPath(this.identity.paneId), MAX_PANE_LOG_BYTES).catch(() => {});
+    if (!this.piping) {
+      await this.gateway.startPipe(this.identity.paneId, paneLogPath(this.identity.paneId)).catch(() => {});
+      this.piping = true;
     }
-    const h = hash(tailLines.join("\n"));
+    const text = await this.gateway.capture(this.identity.paneId, 200);
+    const h = hash(text);
     if (h !== this.lastHash) {
       this.lastActivityTs = now;
       this.lastHash = h;
     }
+    await rotateIfLarge(paneLogPath(this.identity.paneId), MAX_PANE_LOG_BYTES).catch(() => {});
+    const tailLines = text.split("\n").filter((l) => l.length > 0);
     return {
       paneId: this.identity.paneId,
       kind: "terminal",
       ts: now,
       tailLines,
       lastActivityTs: this.lastActivityTs,
-      toolStarts: [],
     };
   }
 
   async teardown(): Promise<void> {
-    if (this.piping && !isMuxGateway(this.gateway)) {
-      await this.gateway.stopPipe(this.identity.paneId).catch(() => {});
-    }
-    if (!isMuxGateway(this.gateway)) {
-      await pruneLog(paneLogPath(this.identity.paneId)).catch(() => {});
-    }
+    if (this.piping) await this.gateway.stopPipe(this.identity.paneId).catch(() => {});
+    await pruneLog(paneLogPath(this.identity.paneId)).catch(() => {});
   }
 }
 
@@ -204,8 +183,6 @@ export function isEnded(rows: Record<string, unknown>[]): boolean {
 export class AgentSensor implements Sensor {
   readonly kind = "agent" as const;
   private resolvedPath: string | null | undefined;
-  /** callIds already emitted as toolStarts — edge, not level. */
-  private seenCallIds = new Set<string>();
 
   constructor(
     private readonly identity: PaneIdentity,
@@ -238,14 +215,7 @@ export class AgentSensor implements Sensor {
   async observe(now: number): Promise<Observation> {
     const filePath = await this.resolvePath();
     if (!filePath) {
-      return {
-        paneId: this.identity.paneId,
-        kind: "agent",
-        ts: now,
-        tailLines: [],
-        lastActivityTs: now,
-        toolStarts: [],
-      };
+      return { paneId: this.identity.paneId, kind: "agent", ts: now, tailLines: [], lastActivityTs: now };
     }
 
     const tail = new RingBuffer<Record<string, unknown>>(AGENT_TAIL_CAPACITY);
@@ -253,24 +223,12 @@ export class AgentSensor implements Sensor {
       for await (const row of readJsonl(filePath)) tail.push(row);
     } catch {
       // File vanished or became unreadable mid-tick; degrade rather than throw.
-      return {
-        paneId: this.identity.paneId,
-        kind: "agent",
-        ts: now,
-        tailLines: [],
-        lastActivityTs: now,
-        toolStarts: [],
-      };
+      return { paneId: this.identity.paneId, kind: "agent", ts: now, tailLines: [], lastActivityTs: now };
     }
 
     const rows = tail.toArray();
     const tailLines = rows.map((r) => JSON.stringify(r));
     const lastActivityTs = tsOf(rows[rows.length - 1]) ?? now;
-    const toolStarts = parseToolStarts(rows, this.identity.paneId).filter((s) => {
-      if (this.seenCallIds.has(s.callId)) return false;
-      rememberCallId(this.seenCallIds, s.callId);
-      return true;
-    });
 
     return {
       paneId: this.identity.paneId,
@@ -281,7 +239,6 @@ export class AgentSensor implements Sensor {
       awaitingInput: isAssistantWaiting(rows),
       sawError: hasToolError(rows),
       ended: isEnded(rows),
-      toolStarts,
     };
   }
 
@@ -292,7 +249,7 @@ export class AgentSensor implements Sensor {
  * Picks the richer sensor whenever the pane is resolvable to a known
  * harness session, else falls back to the terminal sensor.
  */
-export function makeSensor(identity: PaneIdentity, gateway: TerminalGateway): Sensor {
+export function makeSensor(identity: PaneIdentity, gateway: TmuxGateway): Sensor {
   if (identity.harness && identity.sessionId) return new AgentSensor(identity);
   return new TerminalSensor(identity, gateway);
 }

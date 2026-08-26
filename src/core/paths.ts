@@ -127,26 +127,6 @@ export function gmuxSocketPath(): string {
   return join(gmuxDir(), "daemon.sock");
 }
 
-/** Control-plane socket for the native mux (`gmuxd`). */
-export function muxSocketPath(): string {
-  return join(gmuxDir(), "mux.sock");
-}
-
-/** Singleton lock for `gmuxd` (+ intel pid). */
-export function muxLockPath(): string {
-  return join(gmuxDir(), "mux.lock");
-}
-
-/** Auth token file intel presents on hello. */
-export function intelTokenPath(): string {
-  return join(gmuxDir(), "intel.token");
-}
-
-/** Per-TUI data-plane socket for length-prefixed frame rects. */
-export function muxFramesSocketPath(clientId: string): string {
-  return join(gmuxDir(), `mux.frames.${clientId}.sock`);
-}
-
 /** Snapshot file written every tick; the fallback when the daemon is down. */
 export function gmuxSnapshotPath(): string {
   return join(gmuxDir(), "snapshot.json");

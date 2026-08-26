@@ -32,11 +32,8 @@ import { registerPick } from "./commands/pick.js";
 import { registerPickerRows } from "./commands/picker-rows.js";
 import { registerPreviewCard } from "./commands/__preview-card.js";
 import { registerResume } from "./commands/resume.js";
-import { registerAttach } from "./commands/attach.js";
 import { registerRun } from "./commands/run.js";
 import { registerShow } from "./commands/show.js";
-import { registerPeel } from "./commands/peel.js";
-import { isMuxControlCommand, registerSpawn } from "./commands/spawn.js";
 import { registerSummarize } from "./commands/summarize.js";
 import { registerTmux } from "./commands/tmux.js";
 import { red, dim } from "./format.js";
@@ -108,10 +105,6 @@ program
     // until you quit Claude Code.
     if (actionCommand.name() === "ls" || actionCommand.name() === "pick") return;
 
-    // Headless mux verbs speak NDJSON; a summarizer child on stderr is noise
-    // and can start a model call from `gmux spawn --json`.
-    if (isMuxControlCommand(actionCommand.name(), actionCommand.parent?.name())) return;
-
     await maybeAutoSummarize({
       enabled: thisCommand.opts()["autoSummarize"] !== false,
       notify: (message) => process.stderr.write(`${dim(message)}\n`),
@@ -141,9 +134,6 @@ registerOrganize(program);
 registerRun(program);
 registerWatch(program);
 registerDaemon(program);
-registerAttach(program);
-registerSpawn(program);
-registerPeel(program);
 
 async function main(): Promise<void> {
   try {

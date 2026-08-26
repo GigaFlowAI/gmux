@@ -1,21 +1,9 @@
-import { Command } from "commander";
 import { describe, expect, it } from "vitest";
-import { buildFrame, cockpitApplyTarget, registerCockpit, sessionsForSnapshot } from "../src/cli/commands/cockpit.js";
-import { GmuxError } from "../src/core/errors.js";
+import { buildFrame, sessionsForSnapshot } from "../src/cli/commands/cockpit.js";
 import type { WorkspaceSnapshot } from "../src/core/gmux-types.js";
 import type { SessionRecord } from "../src/core/types.js";
 
 const snap: WorkspaceSnapshot = { version: 1, updatedAt: 0, panes: [], hostPressure: null, guardianLog: [] };
-
-describe("registerCockpit", () => {
-  it("is hidden and exits 2 with fix: use gmux attach", async () => {
-    const program = new Command();
-    program.exitOverride();
-    registerCockpit(program);
-    expect(program.helpInformation()).not.toMatch(/\bcockpit\b/);
-    await expect(program.parseAsync(["cockpit"], { from: "user" })).rejects.toBeInstanceOf(GmuxError);
-  });
-});
 
 describe("cockpit buildFrame", () => {
   it("clears the screen and shows the pane count", () => {
@@ -36,18 +24,6 @@ const rec = (sessionId: string): SessionRecord => ({
   startedAt: null, updatedAt: "t", messageCount: 1, userPromptCount: 1, title: null, lastUserPrompt: null,
   recentUserPrompts: [], arcPrompts: [], filesTouched: [], prLinks: [], lastAssistantText: null,
   lastToolFailure: null, endedMidTask: false, isSidechain: false, isAutomated: false,
-});
-
-describe("cockpitApplyTarget", () => {
-  it("keeps tmux snapshot ids preview-only so apply never sends @N to mux", () => {
-    expect(cockpitApplyTarget(["%1", "%2"])).toBe("preview-only");
-    expect(cockpitApplyTarget([])).toBe("preview-only");
-  });
-
-  it("allows mux apply only when every pane id is a mux p_ id", () => {
-    expect(cockpitApplyTarget(["p_A", "p_B"])).toBe("mux");
-    expect(cockpitApplyTarget(["p_A", "%1"])).toBe("preview-only");
-  });
 });
 
 describe("sessionsForSnapshot", () => {

@@ -1,15 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import {
-  gmuxSocketPath,
-  gmuxSnapshotPath,
-  paneLogPath,
-  workViewPath,
-  workReportPath,
-  muxSocketPath,
-  muxLockPath,
-  muxFramesSocketPath,
-  intelTokenPath,
-} from "../src/core/paths.js";
+import { gmuxSocketPath, gmuxSnapshotPath, paneLogPath, workViewPath, workReportPath } from "../src/core/paths.js";
 import { tmpdir } from "node:os";
 
 describe("gmux paths", () => {
@@ -18,15 +8,6 @@ describe("gmux paths", () => {
     expect(gmuxSocketPath()).toBe("/tmp/xdgcache/gmux/gmux/daemon.sock");
     expect(gmuxSnapshotPath()).toBe("/tmp/xdgcache/gmux/gmux/snapshot.json");
     expect(paneLogPath("%3")).toBe("/tmp/xdgcache/gmux/gmux/panes/pane-3.log");
-  });
-
-  it("keeps daemon.sock for leftover tmux clients and puts mux.sock beside it", () => {
-    expect(gmuxSocketPath().endsWith("daemon.sock")).toBe(true);
-    expect(muxSocketPath().endsWith("mux.sock")).toBe(true);
-    expect(muxLockPath().endsWith("mux.lock")).toBe(true);
-    expect(intelTokenPath().endsWith("intel.token")).toBe(true);
-    expect(muxFramesSocketPath("c_1").endsWith("mux.frames.c_1.sock")).toBe(true);
-    expect(muxSocketPath()).not.toBe(gmuxSocketPath());
   });
 });
 
