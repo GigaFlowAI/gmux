@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildFrame, sessionsForSnapshot } from "../src/cli/commands/cockpit.js";
+import { buildFrame, cockpitApplyTarget, sessionsForSnapshot } from "../src/cli/commands/cockpit.js";
 import type { WorkspaceSnapshot } from "../src/core/gmux-types.js";
 import type { SessionRecord } from "../src/core/types.js";
 
@@ -24,6 +24,18 @@ const rec = (sessionId: string): SessionRecord => ({
   startedAt: null, updatedAt: "t", messageCount: 1, userPromptCount: 1, title: null, lastUserPrompt: null,
   recentUserPrompts: [], arcPrompts: [], filesTouched: [], prLinks: [], lastAssistantText: null,
   lastToolFailure: null, endedMidTask: false, isSidechain: false, isAutomated: false,
+});
+
+describe("cockpitApplyTarget", () => {
+  it("keeps tmux snapshot ids preview-only so apply never sends @N to mux", () => {
+    expect(cockpitApplyTarget(["%1", "%2"])).toBe("preview-only");
+    expect(cockpitApplyTarget([])).toBe("preview-only");
+  });
+
+  it("allows mux apply only when every pane id is a mux p_ id", () => {
+    expect(cockpitApplyTarget(["p_A", "p_B"])).toBe("mux");
+    expect(cockpitApplyTarget(["p_A", "%1"])).toBe("preview-only");
+  });
 });
 
 describe("sessionsForSnapshot", () => {

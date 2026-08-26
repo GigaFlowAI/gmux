@@ -174,13 +174,24 @@ export class FakeMuxGateway implements MuxGateway {
     this.renamed.push({ tabId, name });
   }
 
+  hasTab(tabId: string): boolean {
+    return this.tabs.has(tabId);
+  }
+
   async movePane(srcPane: string, dstTab: string): Promise<void> {
     const pane = this.panes.find((p) => p.paneId === srcPane);
     if (!pane) return;
-    const from = this.tabs.get(pane.tabId);
-    if (from) from.paneIds = from.paneIds.filter((id) => id !== srcPane);
-    if (!this.tabs.has(dstTab)) this.tabs.set(dstTab, { name: dstTab, paneIds: [] });
-    this.tabs.get(dstTab)!.paneIds.push(srcPane);
+    const dest = this.tabs.get(dstTab);
+    if (!dest) return;
+    const fromId = pane.tabId;
+    if (fromId !== dstTab) {
+      const from = this.tabs.get(fromId);
+      if (from) {
+        from.paneIds = from.paneIds.filter((id) => id !== srcPane);
+        if (from.paneIds.length === 0) this.tabs.delete(fromId);
+      }
+    }
+    if (!dest.paneIds.includes(srcPane)) dest.paneIds.push(srcPane);
     pane.tabId = dstTab;
     this.moved.push({ srcPane, dstTab });
   }

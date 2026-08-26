@@ -741,9 +741,14 @@ impl Mux {
                 )
             })?;
 
-        if let Some(ws) = self.workspaces.get_mut(&from_ws) {
-            if let Some(tab) = ws.tabs.get_mut(&from_tab) {
-                tab.pane_ids.retain(|id| id != src_pane);
+        if from_tab != dst_tab {
+            if let Some(ws) = self.workspaces.get_mut(&from_ws) {
+                if let Some(tab) = ws.tabs.get_mut(&from_tab) {
+                    tab.pane_ids.retain(|id| id != src_pane);
+                    if tab.pane_ids.is_empty() {
+                        ws.tabs.remove(&from_tab);
+                    }
+                }
             }
         }
         if let Some(ws) = self.workspaces.get_mut(&dst_ws) {
@@ -811,38 +816,42 @@ impl Mux {
                         Err(err) => Err(err.message()),
                     }
                 }
-                "rename-tab" => {
-                    match resolve_tab_target(step.get("tab"), &handles) {
-                        Some(tab_id) => self
-                            .rename_tab(
-                                &tab_id,
-                                step.get("name").and_then(Value::as_str).unwrap_or(""),
-                            )
-                            .map_err(|e| e.message()),
-                        None => Err("unbound tab target".into()),
-                    }
-                }
+                "rename-tab" => match self.resolve_live_tab(step.get("tab"), &handles) {
+                    Ok(tab_id) => self
+                        .rename_tab(
+                            &tab_id,
+                            step.get("name").and_then(Value::as_str).unwrap_or(""),
+                        )
+                        .map_err(|e| e.message()),
+                    Err(reason) => Err(reason),
+                },
                 "move-pane" => {
                     let pane_id = step.get("paneId").and_then(Value::as_str).unwrap_or("");
-                    match resolve_tab_target(step.get("to"), &handles) {
-                        Some(tab_id) => self
-                            .move_pane(pane_id, &tab_id)
-                            .map_err(|e| e.message()),
-                        None => Err("unbound tab target".into()),
+                    if pane_id.is_empty() || !self.panes.contains_key(pane_id) {
+                        Err(format!("pane {pane_id} no longer present"))
+                    } else {
+                        match self.resolve_live_tab(step.get("to"), &handles) {
+                            Ok(tab_id) => self.move_pane(pane_id, &tab_id).map_err(|e| e.message()),
+                            Err(reason) => Err(reason),
+                        }
                     }
                 }
                 "break-pane" => {
                     let pane_id = step.get("paneId").and_then(Value::as_str).unwrap_or("");
-                    let handle = step.get("handle").and_then(Value::as_str).unwrap_or("");
-                    let name = step.get("name").and_then(Value::as_str);
-                    match self.break_pane(pane_id, name) {
-                        Ok(tab_id) => {
-                            if !handle.is_empty() {
-                                handles.insert(handle.to_string(), tab_id);
+                    if pane_id.is_empty() || !self.panes.contains_key(pane_id) {
+                        Err(format!("pane {pane_id} no longer present"))
+                    } else {
+                        let handle = step.get("handle").and_then(Value::as_str).unwrap_or("");
+                        let name = step.get("name").and_then(Value::as_str);
+                        match self.break_pane(pane_id, name) {
+                            Ok(tab_id) => {
+                                if !handle.is_empty() {
+                                    handles.insert(handle.to_string(), tab_id);
+                                }
+                                Ok(())
                             }
-                            Ok(())
+                            Err(err) => Err(err.message()),
                         }
-                        Err(err) => Err(err.message()),
                     }
                 }
                 other => Err(format!("unknown op {other}")),
@@ -929,21 +938,38 @@ impl Drop for Mux {
     }
 }
 
-fn resolve_tab_target(
-    target: Option<&Value>,
-    handles: &HashMap<String, String>,
-) -> Option<String> {
-    let target = target?;
-    match target.get("kind").and_then(Value::as_str)? {
-        "tab" => target
-            .get("tabId")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        "handle" => target
-            .get("handle")
-            .and_then(Value::as_str)
-            .and_then(|h| handles.get(h).cloned()),
-        _ => None,
+impl Mux {
+    fn tab_exists(&self, tab_id: &str) -> bool {
+        self.workspaces.values().any(|ws| ws.tabs.contains_key(tab_id))
+    }
+
+    /// Same skip strings as TS `applyPlan`: unknown pane/tab is skipped, not invented.
+    fn resolve_live_tab(
+        &self,
+        target: Option<&Value>,
+        handles: &HashMap<String, String>,
+    ) -> Result<String, String> {
+        let Some(target) = target else {
+            return Err("unbound tab target".into());
+        };
+        match target.get("kind").and_then(Value::as_str) {
+            Some("tab") => {
+                let tab_id = target.get("tabId").and_then(Value::as_str).unwrap_or("");
+                if tab_id.is_empty() || !self.tab_exists(tab_id) {
+                    Err(format!("tab {tab_id} not present"))
+                } else {
+                    Ok(tab_id.to_string())
+                }
+            }
+            Some("handle") => {
+                let handle = target.get("handle").and_then(Value::as_str).unwrap_or("");
+                handles
+                    .get(handle)
+                    .cloned()
+                    .ok_or_else(|| format!("unbound tab handle {handle}"))
+            }
+            _ => Err("unbound tab target".into()),
+        }
     }
 }
 

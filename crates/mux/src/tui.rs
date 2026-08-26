@@ -309,7 +309,7 @@ pub async fn run(cwd: PathBuf) -> Result<(), TuiError> {
                         mouse,
                         &mut mode,
                         &mut model,
-                        &funnel,
+                        &mut funnel,
                         term_rows,
                         &mut ctrl_write,
                         &mut next_id,
@@ -532,11 +532,22 @@ async fn apply_key(
     Ok(false)
 }
 
+/// Clicking away from Confirm cancels the plan so the preview cannot stick
+/// while Esc is forwarded to a PTY.
+pub(crate) fn click_away_from_confirm(mode: &mut Mode, funnel: &mut Funnel) {
+    if *mode != Mode::Confirm {
+        return;
+    }
+    let _ = funnel.next_generation();
+    funnel.clear_confirm();
+    *mode = Mode::Sidebar;
+}
+
 async fn handle_mouse(
     mouse: MouseEvent,
     mode: &mut Mode,
     model: &mut Model,
-    funnel: &Funnel,
+    funnel: &mut Funnel,
     term_rows: u16,
     ctrl_write: &mut OwnedWriteHalf,
     next_id: &mut u64,
@@ -555,6 +566,7 @@ async fn handle_mouse(
         }
         return Ok(());
     }
+    click_away_from_confirm(mode, funnel);
     match sidebar::hit_layout(mouse.column, mouse.row, &lay) {
         Hit::ChromeRow(i) => {
             if let Some(pane) = model.panes.get(i) {
@@ -1162,5 +1174,21 @@ mod tests {
         assert_eq!(mode, Mode::Sidebar);
         assert_eq!(action, Action::ConfirmCancel);
         assert!(funnel.confirm_plan().is_none());
+    }
+
+    #[test]
+    fn mouse_leave_confirm_cancels_plan() {
+        let mut funnel = Funnel::new(vec!["a"]);
+        funnel.set_confirm_plan(json!({
+            "schemaVersion": 2,
+            "summary": "late",
+            "steps": [],
+        }));
+        let mut mode = Mode::Confirm;
+        click_away_from_confirm(&mut mode, &mut funnel);
+        assert_eq!(mode, Mode::Sidebar);
+        assert!(funnel.confirm_plan().is_none());
+        click_away_from_confirm(&mut mode, &mut funnel);
+        assert_eq!(mode, Mode::Sidebar);
     }
 }

@@ -29,6 +29,15 @@ const ASK_LABEL = "organize · ask · Enter · ^V report · ^G/Esc close";
 /** One concise answer per session — asked in parallel, but bounded. */
 const ASK_CONCURRENCY = 6;
 
+/**
+ * Mux apply needs mux pane ids (`p_…`). Tmux daemon snapshots use `%N` / `@N`
+ * and must stay preview-only — never send those ids to MuxClient.
+ */
+export function cockpitApplyTarget(paneIds: readonly string[]): "mux" | "preview-only" {
+  if (paneIds.length === 0) return "preview-only";
+  return paneIds.every((id) => id.startsWith("p_")) ? "mux" : "preview-only";
+}
+
 /** Clear screen + home, then the cockpit grid — CRLF-joined for raw-mode stdout. */
 export function buildFrame(snapshot: WorkspaceSnapshot, now: number, opts?: RenderCockpitOptions): string {
   return CLEAR + renderCockpit(snapshot, now, opts).join("\r\n");
@@ -239,7 +248,8 @@ export function registerCockpit(program: Command): void {
                   // before its per-step loop — e.g. listPanes() — would escape;
                   // nothing was applied at that point, so a clean close is safe.
                   try {
-                    if (plan) {
+                    const paneIds = (latest?.panes ?? []).filter((p) => !p.gone).map((p) => p.identity.paneId);
+                    if (plan && cockpitApplyTarget(paneIds) === "mux") {
                       const client = await MuxClient.connectCli();
                       try {
                         await applyPlan(plan, client);

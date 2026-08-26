@@ -393,6 +393,31 @@ describe("applyPlan", () => {
     expect(gw.createdTabs.filter((t) => t.name === "x")).toEqual([]);
   });
 
+  it("skips a missing tab without inventing one — same reason as mux apply", async () => {
+    const gw = new FakeMuxGateway();
+    const spawned = await gw.spawn({ cwd: "/a", argv: ["claude"] });
+    const plan: OrganizePlan = {
+      schemaVersion: 2,
+      summary: "s",
+      steps: [
+        {
+          op: "move-pane",
+          paneId: spawned.paneId,
+          to: { kind: "tab", tabId: "t_ghost" },
+          description: "x",
+        },
+      ],
+    };
+
+    const result = await applyPlan(plan, gw);
+
+    expect(result.applied).toEqual([]);
+    expect(result.skipped).toEqual([{ step: plan.steps[0], reason: "tab t_ghost not present" }]);
+    expect(gw.moved).toEqual([]);
+    expect(gw.hasTab("t_ghost")).toBe(false);
+    expect(gw.hasTab(spawned.tabId)).toBe(true);
+  });
+
   it("never calls a destructive gateway method — close is not an organize verb", async () => {
     const gw = new FakeMuxGateway();
     const plan: OrganizePlan = { schemaVersion: 2, summary: "s", steps: [] };

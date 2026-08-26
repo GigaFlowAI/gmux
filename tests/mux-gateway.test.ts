@@ -23,6 +23,19 @@ describe("FakeMuxGateway", () => {
     expect("swapPane" in gw).toBe(false);
   });
 
+  it("movePane prunes an emptied source tab and does not invent dest", async () => {
+    const gw = new FakeMuxGateway();
+    const a = await gw.spawn({ cwd: "/t", argv: ["zsh"], tab: { mode: "new", name: "a" } });
+    const dest = await gw.newTab("b");
+    await gw.movePane(a.paneId, dest);
+    expect(gw.hasTab(a.tabId)).toBe(false);
+    expect(gw.hasTab(dest)).toBe(true);
+    expect(gw.closed).toEqual([]);
+    await gw.movePane(a.paneId, "t_ghost");
+    expect(gw.hasTab("t_ghost")).toBe(false);
+    expect(gw.moved).toEqual([{ srcPane: a.paneId, dstTab: dest }]);
+  });
+
   it("peel does not await extract", async () => {
     const gw = new FakeMuxGateway();
     const extract = new Promise(() => {}); // never resolves
