@@ -63,6 +63,27 @@ fn alt_screen_lf_does_not_push_scrollback() {
 }
 
 #[test]
+fn resize_in_alt_screen_preserves_primary() {
+    let mut g = Grid::new(4, 2);
+    g.feed(b"keep");
+    g.feed(b"\x1b[?1049h");
+    g.feed(b"alt!");
+    g.resize(3, 2);
+    let alt = g.snapshot("p_TEST", "vim");
+    assert!(alt.alternate_screen);
+    assert_eq!(alt.cols, 3);
+    assert_eq!(alt.lines[0].text, "alt");
+    g.feed(b"\x1b[?1049l");
+    let snap = g.snapshot("p_TEST", "zsh");
+    assert!(!snap.alternate_screen);
+    assert_eq!(snap.cols, 3);
+    assert_eq!(
+        snap.lines[0].text, "kee",
+        "resize must clip/copy saved_cells, not blank the primary"
+    );
+}
+
+#[test]
 fn inverse_and_rgb_are_intensity_1() {
     let mut g = Grid::new(4, 1);
     g.feed(FIXTURE_INVERSE_RGB);

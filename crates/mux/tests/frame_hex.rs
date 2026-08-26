@@ -144,3 +144,70 @@ fn ctrl_q_is_detach() {
     assert!(!gmuxd::tui::is_detach_key(false, 'q'));
     assert!(!gmuxd::tui::is_detach_key(true, 'c'));
 }
+
+#[test]
+fn compose_frame_inverts_cursor_cell_without_widening_packet() {
+    let mut pump = gmuxd::frames::FramePump::new();
+    let mut cache = gmuxd::frames::FrameCache::new();
+    let bytes = gmuxd::frames::compose_frame(
+        &mut pump,
+        &mut cache,
+        2,
+        1,
+        [0u8; 16],
+        vec![cell("A"), cell("B")],
+        (1, 0),
+    )
+    .unwrap();
+    assert_eq!(&bytes[4..6], &[1u8, 0u8]); // still type=1, kind=full; no cursor field
+    let f = gmuxd::frames::decode(&bytes).unwrap();
+    assert_eq!(f.rects[0].cells[0].grapheme, "A");
+    assert_eq!(f.rects[0].cells[0].attrs & gmuxd::frames::ATTR_INVERSE, 0);
+    assert_eq!(f.rects[0].cells[1].grapheme, "B");
+    assert_eq!(
+        f.rects[0].cells[1].attrs & gmuxd::frames::ATTR_INVERSE,
+        gmuxd::frames::ATTR_INVERSE,
+        "cursor cell must be inverted at encode time"
+    );
+}
+
+#[test]
+fn compose_frame_focus_change_is_full_not_dirty() {
+    let mut pump = gmuxd::frames::FramePump::new();
+    let mut cache = gmuxd::frames::FrameCache::new();
+    let pane_a = [1u8; 16];
+    let pane_b = [2u8; 16];
+    let f1 = gmuxd::frames::compose_frame(
+        &mut pump,
+        &mut cache,
+        2,
+        1,
+        pane_a,
+        vec![cell("A"), cell("A")],
+        (0, 0),
+    )
+    .unwrap();
+    assert_eq!(
+        gmuxd::frames::decode(&f1).unwrap().kind,
+        gmuxd::frames::Kind::Full
+    );
+    pump.ack(1);
+    let f2 = gmuxd::frames::compose_frame(
+        &mut pump,
+        &mut cache,
+        2,
+        1,
+        pane_b,
+        vec![cell("B"), cell("B")],
+        (0, 0),
+    )
+    .unwrap();
+    let d = gmuxd::frames::decode(&f2).unwrap();
+    assert_eq!(
+        d.kind,
+        gmuxd::frames::Kind::Full,
+        "focus change must not dirty-diff pane B against pane A"
+    );
+    assert_eq!(d.pane_id, pane_b);
+    assert_eq!(d.rects[0].cells[0].grapheme, "B");
+}

@@ -21,6 +21,8 @@ pub const TYPE_ACK: u8 = 3;
 pub const TYPE_INPUT: u8 = 4;
 pub const TYPE_RESIZE: u8 = 5;
 pub const TYPE_MOUSE: u8 = 6;
+/// Wire attrs bit3: inverse. Set on the cursor cell at encode time (not a packet field).
+pub const ATTR_INVERSE: u8 = 1 << 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -200,6 +202,76 @@ impl FramePump {
         let seq = self.next_seq;
         self.next_seq = self.next_seq.saturating_add(1);
         Some((seq, kind))
+    }
+}
+
+/// Last sent grid for skip/dirty. Tracks pane identity so a focus swap is a full frame.
+#[derive(Debug, Default)]
+pub struct FrameCache {
+    last_cells: Vec<Cell>,
+    last_size: (u16, u16),
+    last_pane: Option<[u8; 16]>,
+}
+
+impl FrameCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+pub fn apply_cursor_inverse(cells: &mut [Cell], cols: u16, cursor: (u16, u16)) {
+    if cols == 0 {
+        return;
+    }
+    let i = cursor.1 as usize * cols as usize + cursor.0 as usize;
+    if let Some(c) = cells.get_mut(i) {
+        c.attrs ^= ATTR_INVERSE;
+    }
+}
+
+pub fn compose_frame(
+    pump: &mut FramePump,
+    cache: &mut FrameCache,
+    cols: u16,
+    rows: u16,
+    pane_id: [u8; 16],
+    mut cells: Vec<Cell>,
+    cursor: (u16, u16),
+) -> Option<Vec<u8>> {
+    apply_cursor_inverse(&mut cells, cols, cursor);
+
+    if cache.last_pane != Some(pane_id) {
+        pump.request_full();
+        cache.last_cells.clear();
+        cache.last_pane = Some(pane_id);
+    }
+    if (cols, rows) != cache.last_size {
+        pump.request_full();
+        cache.last_cells.clear();
+        cache.last_size = (cols, rows);
+    }
+    if cells != cache.last_cells {
+        if cache.last_cells.is_empty() {
+            pump.request_full();
+        } else {
+            for rect in dirty_rects(&cache.last_cells, &cells, cols, rows) {
+                pump.push_dirty(rect);
+            }
+        }
+        cache.last_cells = cells.clone();
+    }
+
+    let (seq, kind) = pump.take_send()?;
+    match kind {
+        Kind::Full => Some(encode_full(cols, rows, seq, &pane_id, &cells)),
+        Kind::Dirty => {
+            let rects = pump.take_dirty();
+            if rects.is_empty() {
+                Some(encode_full(cols, rows, seq, &pane_id, &cells))
+            } else {
+                Some(encode_dirty(cols, rows, seq, &pane_id, &rects))
+            }
+        }
     }
 }
 
@@ -509,8 +581,7 @@ async fn session(
     let mut reader = reader;
     let writer = Arc::new(tokio::sync::Mutex::new(writer));
     let mut pump = FramePump::new();
-    let mut last_cells: Vec<Cell> = Vec::new();
-    let mut last_size = (0u16, 0u16);
+    let mut cache = FrameCache::new();
     let mut interval = tokio::time::interval(Duration::from_millis(16));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -524,9 +595,7 @@ async fn session(
                 if gone {
                     return Ok(());
                 }
-                if let Some(bytes) =
-                    build_frame(mux, client_id, &mut pump, &mut last_cells, &mut last_size)
-                {
+                if let Some(bytes) = build_frame(mux, client_id, &mut pump, &mut cache) {
                     let mut w = writer.lock().await;
                     w.write_all(&bytes).await?;
                     w.flush().await?;
@@ -563,10 +632,9 @@ fn build_frame(
     mux: &Arc<Mutex<Mux>>,
     client_id: &str,
     pump: &mut FramePump,
-    last_cells: &mut Vec<Cell>,
-    last_size: &mut (u16, u16),
+    cache: &mut FrameCache,
 ) -> Option<Vec<u8>> {
-    let (cols, rows, pane_bytes, cells) = {
+    let (cols, rows, pane_bytes, cells, cursor) = {
         let guard = mux.lock().ok()?;
         let client = guard.clients.get(client_id)?;
         let pane_id = client.focused_pane_id.as_ref()?;
@@ -574,37 +642,10 @@ fn build_frame(
         let grid = pane.grid.lock().ok()?;
         let (cols, rows) = grid.size();
         let cells: Vec<Cell> = grid.cells().into_iter().map(Cell::from).collect();
-        (cols, rows, pane.id_bytes, cells)
+        let cursor = grid.cursor();
+        (cols, rows, pane.id_bytes, cells, cursor)
     };
-
-    if (cols, rows) != *last_size {
-        pump.request_full();
-        last_cells.clear();
-        *last_size = (cols, rows);
-    }
-    if cells != *last_cells {
-        if last_cells.is_empty() {
-            pump.request_full();
-        } else {
-            for rect in dirty_rects(last_cells, &cells, cols, rows) {
-                pump.push_dirty(rect);
-            }
-        }
-        *last_cells = cells.clone();
-    }
-
-    let (seq, kind) = pump.take_send()?;
-    match kind {
-        Kind::Full => Some(encode_full(cols, rows, seq, &pane_bytes, &cells)),
-        Kind::Dirty => {
-            let rects = pump.take_dirty();
-            if rects.is_empty() {
-                Some(encode_full(cols, rows, seq, &pane_bytes, &cells))
-            } else {
-                Some(encode_dirty(cols, rows, seq, &pane_bytes, &rects))
-            }
-        }
-    }
+    compose_frame(pump, cache, cols, rows, pane_bytes, cells, cursor)
 }
 
 fn dirty_rects(old: &[Cell], new: &[Cell], cols: u16, rows: u16) -> Vec<Rect> {

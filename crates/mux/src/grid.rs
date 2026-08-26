@@ -130,6 +130,10 @@ impl Grid {
         (self.screen.cols as u16, self.screen.rows as u16)
     }
 
+    pub fn cursor(&self) -> (u16, u16) {
+        (self.screen.cursor_x as u16, self.screen.cursor_y as u16)
+    }
+
     pub fn generation(&self) -> u64 {
         self.generation
     }
@@ -157,20 +161,17 @@ impl Grid {
         if cols == self.screen.cols && rows == self.screen.rows {
             return;
         }
-        let mut new_cells = vec![Cell::empty(); cols * rows];
-        let copy_cols = cols.min(self.screen.cols);
-        let copy_rows = rows.min(self.screen.rows);
-        for y in 0..copy_rows {
-            for x in 0..copy_cols {
-                new_cells[y * cols + x] = self.screen.cells[y * self.screen.cols + x];
-            }
-        }
+        let old_cols = self.screen.cols;
+        let old_rows = self.screen.rows;
+        self.screen.cells = resize_cells(&self.screen.cells, old_cols, old_rows, cols, rows);
+        self.screen.saved_cells =
+            resize_cells(&self.screen.saved_cells, old_cols, old_rows, cols, rows);
         self.screen.cols = cols;
         self.screen.rows = rows;
-        self.screen.cells = new_cells;
-        self.screen.saved_cells = vec![Cell::empty(); cols * rows];
         self.screen.cursor_x = self.screen.cursor_x.min(cols.saturating_sub(1));
         self.screen.cursor_y = self.screen.cursor_y.min(rows.saturating_sub(1));
+        self.screen.saved_x = self.screen.saved_x.min(cols.saturating_sub(1));
+        self.screen.saved_y = self.screen.saved_y.min(rows.saturating_sub(1));
         self.generation = self.generation.saturating_add(1);
     }
 
@@ -423,6 +424,27 @@ impl Screen {
             }
         }
     }
+}
+
+fn resize_cells(
+    old: &[Cell],
+    old_cols: usize,
+    old_rows: usize,
+    cols: usize,
+    rows: usize,
+) -> Vec<Cell> {
+    let mut new = vec![Cell::empty(); cols * rows];
+    let copy_cols = cols.min(old_cols);
+    let copy_rows = rows.min(old_rows);
+    for y in 0..copy_rows {
+        for x in 0..copy_cols {
+            let src = y * old_cols + x;
+            if src < old.len() {
+                new[y * cols + x] = old[src];
+            }
+        }
+    }
+    new
 }
 
 fn skip_color<'a>(p: &'a [u16], iter: &mut impl Iterator<Item = &'a [u16]>) {
