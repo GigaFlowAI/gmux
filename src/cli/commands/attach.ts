@@ -1,19 +1,37 @@
+import { spawnSync } from "node:child_process";
+
 import type { Command } from "commander";
 
 import { GmuxError } from "../../core/errors.js";
+import { ensureMuxd, findGmuxd } from "./spawn.js";
 
 /**
- * TUI attach lands in Task 4. This build is headless: spawn / panes / snapshot
- * talk NDJSON; `gmux attach` refuses with a fix rather than a dead-end.
+ * Start or connect to gmuxd, then exec the full-bleed TUI (`gmuxd attach`).
+ * `ctrl+q` detaches without SIGHUP.
  */
 export function registerAttach(program: Command): void {
   program
     .command("attach")
-    .description("attach a TUI to gmuxd (headless stub until Task 4)")
+    .description("attach a TUI to gmuxd")
     .option("--cwd <dir>", "workspace cwd")
-    .action(async () => {
-      throw new GmuxError("this build is headless", {
-        fix: "this build is headless — Task 4",
-      });
+    .action(async (options: { cwd?: string }) => {
+      await ensureMuxd();
+      const bin = findGmuxd();
+      if (!bin) {
+        throw new GmuxError("gmuxd is not built", {
+          fix: "Run `cargo build -p gmuxd` from the repo root (dev: target/debug/gmuxd).",
+        });
+      }
+      const args = ["attach"];
+      if (options.cwd) args.push("--cwd", options.cwd);
+      const result = spawnSync(bin, args, { stdio: "inherit", env: process.env });
+      if (result.error) {
+        throw new GmuxError(`failed to exec gmuxd attach: ${result.error.message}`, {
+          fix: "Run `cargo build -p gmuxd` and retry.",
+        });
+      }
+      if (result.status != null && result.status !== 0) {
+        process.exit(result.status);
+      }
     });
 }

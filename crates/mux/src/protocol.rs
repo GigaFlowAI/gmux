@@ -200,6 +200,9 @@ async fn handle_client(
         let reply = dispatch(&mux, &lock, &mut conn, &req, &writer).await;
         write_json(&writer, reply).await?;
     }
+    if let Some(id) = conn.client_id.take() {
+        mux.lock().expect("mux").detach_client(&id);
+    }
     Ok(())
 }
 
@@ -213,7 +216,7 @@ async fn dispatch(
     match req.method.as_str() {
         "hello" => handle_hello(mux, lock, conn, req),
         "ping" => ok(&req.id, json!({"ok": true})),
-        "client.attach" => handle_attach(mux, conn, req),
+        "client.attach" => handle_attach(mux, conn, req).await,
         "session.snapshot" => gated(conn, req, "session.snapshot", |conn| {
             let guard = mux.lock().expect("mux");
             let mut snap = guard.snapshot();
@@ -435,7 +438,7 @@ fn handle_hello(
     }
 }
 
-fn handle_attach(mux: &Arc<Mutex<Mux>>, conn: &mut Conn, req: &Request) -> Value {
+async fn handle_attach(mux: &Arc<Mutex<Mux>>, conn: &mut Conn, req: &Request) -> Value {
     let allowed = match &conn.class {
         Ok(class) => peer::may_attach(*class),
         Err(_) => false,
@@ -455,7 +458,42 @@ fn handle_attach(mux: &Arc<Mutex<Mux>>, conn: &mut Conn, req: &Request) -> Value
         .get("clientId")
         .and_then(Value::as_str)
         .map(str::to_string);
-    let client = mux.lock().expect("mux").attach_client(want_id, cols, rows);
+    let cwd = req
+        .params
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(PathBuf::from);
+    let client = match mux
+        .lock()
+        .expect("mux")
+        .attach_client(want_id, cols, rows, cwd.as_deref())
+    {
+        Ok(c) => c,
+        Err(err) => return err_of(&req.id, &err),
+    };
+    let frames_path = mux
+        .lock()
+        .expect("mux")
+        .paths
+        .frames_socket_path(&client.id);
+    match crate::frames::listen(&frames_path) {
+        Ok(listener) => {
+            let mux = mux.clone();
+            let id = client.id.clone();
+            tokio::spawn(async move {
+                crate::frames::serve(mux, id, listener).await;
+            });
+        }
+        Err(err) => {
+            mux.lock().expect("mux").detach_client(&client.id);
+            return error(
+                &req.id,
+                "io",
+                &format!("failed to bind frames socket: {err}"),
+                "Check the cache dir is writable",
+            );
+        }
+    }
     conn.client_id = Some(client.id.clone());
     conn.class = Ok(CallerClass::Tui);
     ok(
@@ -465,6 +503,7 @@ fn handle_attach(mux: &Arc<Mutex<Mux>>, conn: &mut Conn, req: &Request) -> Value
             "focusedPaneId": client.focused_pane_id,
             "cols": client.cols,
             "rows": client.rows,
+            "framesSocket": frames_path,
         }),
     )
 }

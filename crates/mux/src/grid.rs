@@ -30,13 +30,20 @@ pub struct GridSnapshot {
     pub foreground_command: String,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GridCell {
+    pub grapheme: String,
+    /// 0xAARRGGBB; AA=0 means default.
+    pub fg: u32,
+    pub bg: u32,
+    pub attrs: u8,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct Cell {
     ch: char,
     /// 0xAARRGGBB; AA=0 means default.
-    #[allow(dead_code)]
     fg: u32,
-    #[allow(dead_code)]
     bg: u32,
     attrs: u8,
 }
@@ -85,6 +92,7 @@ struct Screen {
 pub struct Grid {
     parser: Parser,
     screen: Screen,
+    generation: u64,
 }
 
 impl Grid {
@@ -109,11 +117,61 @@ impl Grid {
                 bg: 0,
                 scrollback: VecDeque::new(),
             },
+            generation: 0,
         }
     }
 
     pub fn feed(&mut self, bytes: &[u8]) {
         self.parser.advance(&mut self.screen, bytes);
+        self.generation = self.generation.saturating_add(1);
+    }
+
+    pub fn size(&self) -> (u16, u16) {
+        (self.screen.cols as u16, self.screen.rows as u16)
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn cells(&self) -> Vec<GridCell> {
+        self.screen
+            .cells
+            .iter()
+            .map(|c| GridCell {
+                grapheme: if c.ch == '\0' {
+                    String::new()
+                } else {
+                    c.ch.to_string()
+                },
+                fg: c.fg,
+                bg: c.bg,
+                attrs: c.attrs,
+            })
+            .collect()
+    }
+
+    pub fn resize(&mut self, cols: u16, rows: u16) {
+        let cols = cols.max(1) as usize;
+        let rows = rows.max(1) as usize;
+        if cols == self.screen.cols && rows == self.screen.rows {
+            return;
+        }
+        let mut new_cells = vec![Cell::empty(); cols * rows];
+        let copy_cols = cols.min(self.screen.cols);
+        let copy_rows = rows.min(self.screen.rows);
+        for y in 0..copy_rows {
+            for x in 0..copy_cols {
+                new_cells[y * cols + x] = self.screen.cells[y * self.screen.cols + x];
+            }
+        }
+        self.screen.cols = cols;
+        self.screen.rows = rows;
+        self.screen.cells = new_cells;
+        self.screen.saved_cells = vec![Cell::empty(); cols * rows];
+        self.screen.cursor_x = self.screen.cursor_x.min(cols.saturating_sub(1));
+        self.screen.cursor_y = self.screen.cursor_y.min(rows.saturating_sub(1));
+        self.generation = self.generation.saturating_add(1);
     }
 
     pub fn snapshot(&self, pane_id: &str, foreground_command: &str) -> GridSnapshot {

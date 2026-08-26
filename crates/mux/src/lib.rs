@@ -1,5 +1,6 @@
-//! Headless gmux multiplexer (`gmuxd`).
+//! gmux multiplexer (`gmuxd`): PTYs, VTE grid, control socket, attach TUI.
 
+pub mod frames;
 pub mod grid;
 pub mod lock;
 pub mod pane;
@@ -9,3 +10,4 @@ pub mod peer;
 pub mod protocol;
 pub mod session;
 pub mod shadow;
+pub mod tui;

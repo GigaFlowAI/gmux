@@ -7,7 +7,7 @@ use serde::Serialize;
 use tokio::sync::broadcast;
 
 use crate::grid::GridSnapshot;
-use crate::pane::{Pane, SpawnPty, new_id};
+use crate::pane::{Pane, SpawnPty, new_id, new_ulid};
 use crate::paths::Paths;
 use crate::peer::{PidTree, tree_pids};
 
@@ -257,7 +257,7 @@ impl Mux {
             TabSpec::New { name } => (new_id("t_"), name.clone()),
         };
 
-        let pane_id = new_id("p_");
+        let (pane_id, pane_bytes) = new_ulid("p_");
         let mut env = opts.env.clone();
         env.insert(
             "GMUX_SOCKET_PATH".into(),
@@ -284,6 +284,7 @@ impl Mux {
 
         let pane = Pane::spawn(
             pane_id.clone(),
+            pane_bytes,
             tab_id.clone(),
             workspace_id.clone(),
             opts.peel_depth,
@@ -368,7 +369,15 @@ impl Mux {
         Ok(())
     }
 
-    pub fn attach_client(&mut self, client_id: Option<String>, cols: u16, rows: u16) -> Client {
+    pub fn attach_client(
+        &mut self,
+        client_id: Option<String>,
+        cols: u16,
+        rows: u16,
+        cwd: Option<&Path>,
+    ) -> Result<Client, MuxError> {
+        let cols = if cols == 0 { 80 } else { cols };
+        let rows = if rows == 0 { 24 } else { rows };
         let id = client_id.unwrap_or_else(|| new_id("c_"));
         let focused = self
             .clients
@@ -377,11 +386,115 @@ impl Mux {
         let client = Client {
             id: id.clone(),
             focused_pane_id: focused,
-            cols: if cols == 0 { 80 } else { cols },
-            rows: if rows == 0 { 24 } else { rows },
+            cols,
+            rows,
         };
-        self.clients.insert(id, client.clone());
-        client
+        self.clients.insert(id.clone(), client);
+        let cwd = cwd
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+        self.bootstrap_if_empty(&id, &cwd)?;
+        Ok(self.clients.get(&id).cloned().expect("client"))
+    }
+
+    /// Detach this TUI. Does not SIGHUP panes.
+    pub fn detach_client(&mut self, client_id: &str) {
+        self.clients.remove(client_id);
+        let path = self.paths.frames_socket_path(client_id);
+        let _ = std::fs::remove_file(path);
+    }
+
+    pub fn client_input(&mut self, client_id: &str, bytes: &[u8]) -> Result<(), MuxError> {
+        let pane_id = self
+            .focused(client_id)
+            .ok_or_else(|| {
+                MuxError::rpc(
+                    "not_found",
+                    "no focused pane for this client",
+                    "Attach a TUI or spawn a pane with focus: true",
+                )
+            })?
+            .to_string();
+        self.write_input(&pane_id, bytes)
+    }
+
+    pub fn resize_client(&mut self, client_id: &str, cols: u16, rows: u16) -> Result<(), MuxError> {
+        let cols = cols.max(1);
+        let rows = rows.max(1);
+        let pane_id = {
+            let client = self.clients.get_mut(client_id).ok_or_else(|| {
+                MuxError::rpc(
+                    "not_found",
+                    &format!("client {client_id} not found"),
+                    "Call client.attach first",
+                )
+            })?;
+            client.cols = cols;
+            client.rows = rows;
+            client.focused_pane_id.clone()
+        };
+        if let Some(pane_id) = pane_id {
+            if let Some(pane) = self.panes.get_mut(&pane_id) {
+                pane.resize(cols, rows)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn bootstrap_if_empty(&mut self, client_id: &str, cwd: &Path) -> Result<(), MuxError> {
+        let workspace_id = self.ensure_workspace(cwd);
+        let tab_id = self
+            .workspaces
+            .get(&workspace_id)
+            .and_then(|ws| ws.tabs.values().find(|t| t.name == "main"))
+            .map(|t| t.id.clone());
+        let tab_id = match tab_id {
+            Some(id) => id,
+            None => {
+                let tab_id = new_id("t_");
+                if let Some(ws) = self.workspaces.get_mut(&workspace_id) {
+                    ws.tabs.insert(
+                        tab_id.clone(),
+                        Tab {
+                            id: tab_id.clone(),
+                            name: "main".into(),
+                            pane_ids: Vec::new(),
+                        },
+                    );
+                }
+                tab_id
+            }
+        };
+        let first_pane = self
+            .workspaces
+            .get(&workspace_id)
+            .and_then(|ws| ws.tabs.get(&tab_id))
+            .and_then(|t| t.pane_ids.first())
+            .cloned();
+        if first_pane.is_none() {
+            let root = self
+                .workspaces
+                .get(&workspace_id)
+                .map(|ws| ws.cwd.clone())
+                .unwrap_or_else(|| git_root_or_cwd(cwd));
+            self.spawn(SpawnOpts {
+                cwd: root,
+                argv: self.default_argv(),
+                env: Default::default(),
+                tab: TabSpec::Existing {
+                    tab_id: tab_id.clone(),
+                },
+                focus: true,
+                peel_depth: 0,
+                client_id: Some(client_id.to_string()),
+                workspace_id: Some(workspace_id),
+            })?;
+        } else if self.focused(client_id).is_none() {
+            if let Some(pane_id) = first_pane {
+                self.set_client_focus(client_id, &pane_id);
+            }
+        }
+        Ok(())
     }
 
     pub fn pane_trees(&self) -> Vec<PidTree> {
@@ -442,15 +555,19 @@ impl Mux {
     }
 
     fn ensure_workspace(&mut self, cwd: &Path) -> String {
-        if let Some((id, _)) = self.workspaces.iter().find(|(_, ws)| ws.cwd == cwd) {
+        let root = git_root_or_cwd(cwd);
+        if let Some((id, _)) = self.workspaces.iter().find(|(_, ws)| ws.cwd == root) {
             return id.clone();
         }
-        let id = workspace_id(cwd);
+        let id = workspace_id_for(&root);
+        if self.workspaces.contains_key(&id) {
+            return id;
+        }
         self.workspaces.insert(
             id.clone(),
             Workspace {
                 id: id.clone(),
-                cwd: cwd.to_path_buf(),
+                cwd: root,
                 tabs: HashMap::new(),
             },
         );
@@ -501,9 +618,33 @@ fn pane_json(pane: &Pane) -> serde_json::Value {
     })
 }
 
-fn workspace_id(cwd: &Path) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    cwd.hash(&mut hasher);
-    format!("ws_{:012x}", hasher.finish() & 0xffff_ffff_ffff)
+/// Git toplevel if `git rev-parse --show-toplevel` succeeds, else `cwd`.
+pub fn git_root_or_cwd(cwd: &Path) -> PathBuf {
+    match std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(cwd)
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if s.is_empty() {
+                cwd.to_path_buf()
+            } else {
+                PathBuf::from(s)
+            }
+        }
+        _ => cwd.to_path_buf(),
+    }
+}
+
+/// `ws_` + 12-char hex of SHA-256(git root if git, else cwd).
+pub fn workspace_id_for(cwd: &Path) -> String {
+    use sha2::{Digest, Sha256};
+    use std::os::unix::ffi::OsStrExt;
+    let root = git_root_or_cwd(cwd);
+    let hash = Sha256::digest(root.as_os_str().as_bytes());
+    format!(
+        "ws_{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        hash[0], hash[1], hash[2], hash[3], hash[4], hash[5]
+    )
 }

@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use gmuxd::lock::Lock;
 use gmuxd::paths::Paths;
-use gmuxd::session::{Mux, MuxError, SpawnOpts, Spawned, TabSpec};
+use gmuxd::session::{Client, Mux, MuxError, SpawnOpts, Spawned, TabSpec};
 
 pub struct Harness {
     mux: Arc<Mutex<Mux>>,
@@ -77,6 +77,76 @@ impl Harness {
             .focused(client_id)
             .unwrap()
             .to_string()
+    }
+
+    pub fn attach(&self) -> Client {
+        let cwd = self._dir.path().to_path_buf();
+        self.mux
+            .lock()
+            .unwrap()
+            .attach_client(None, 80, 24, Some(&cwd))
+            .unwrap()
+    }
+
+    pub fn mux(&self) -> Arc<Mutex<Mux>> {
+        self.mux.clone()
+    }
+
+    pub fn paths(&self) -> Paths {
+        self.mux.lock().unwrap().paths.clone()
+    }
+
+    pub fn snapshot(&self) -> serde_json::Value {
+        self.mux.lock().unwrap().snapshot()
+    }
+
+    pub fn detach(&self, client_id: &str) {
+        self.mux.lock().unwrap().detach_client(client_id);
+    }
+
+    pub fn resize(&self, client_id: &str, cols: u16, rows: u16) {
+        self.mux
+            .lock()
+            .unwrap()
+            .resize_client(client_id, cols, rows)
+            .unwrap();
+    }
+
+    pub fn has_pane(&self, pane_id: &str) -> bool {
+        self.mux.lock().unwrap().panes.contains_key(pane_id)
+    }
+
+    pub fn has_client(&self, client_id: &str) -> bool {
+        self.mux.lock().unwrap().clients.contains_key(client_id)
+    }
+
+    pub fn focused_opt(&self, client_id: &str) -> Option<String> {
+        self.mux
+            .lock()
+            .unwrap()
+            .focused(client_id)
+            .map(str::to_string)
+    }
+
+    pub fn grid_size(&self, pane_id: &str) -> (u16, u16) {
+        let mux = self.mux.lock().unwrap();
+        mux.panes
+            .get(pane_id)
+            .expect("pane")
+            .grid
+            .lock()
+            .expect("grid")
+            .size()
+    }
+
+    pub fn pane_id_bytes(&self, pane_id: &str) -> [u8; 16] {
+        self.mux
+            .lock()
+            .unwrap()
+            .panes
+            .get(pane_id)
+            .expect("pane")
+            .id_bytes
     }
 
     pub fn feed_grid(&self, pane_id: &str, bytes: &[u8]) {

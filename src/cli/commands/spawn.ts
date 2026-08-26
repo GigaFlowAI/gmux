@@ -55,7 +55,7 @@ async function readMuxLock(): Promise<MuxLockFile | null> {
   }
 }
 
-function findGmuxd(): string | null {
+export function findGmuxd(): string | null {
   if (process.env.GMUXD_PATH && existsSync(process.env.GMUXD_PATH)) {
     return process.env.GMUXD_PATH;
   }

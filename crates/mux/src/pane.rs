@@ -33,13 +33,18 @@ pub fn encode_crockford(bytes: &[u8]) -> String {
     out
 }
 
-pub fn new_id(prefix: &str) -> String {
+pub fn new_ulid(prefix: &str) -> (String, [u8; 16]) {
     let bytes = ulid::Ulid::new().to_bytes();
-    format!("{prefix}{}", encode_crockford(&bytes))
+    (format!("{prefix}{}", encode_crockford(&bytes)), bytes)
+}
+
+pub fn new_id(prefix: &str) -> String {
+    new_ulid(prefix).0
 }
 
 pub struct Pane {
     pub id: String,
+    pub id_bytes: [u8; 16],
     pub tab_id: String,
     pub workspace_id: String,
     pub cwd: PathBuf,
@@ -53,7 +58,7 @@ pub struct Pane {
     pub grid: Arc<Mutex<Grid>>,
     writer: Option<Box<dyn Write + Send>>,
     child: Option<Box<dyn portable_pty::Child + Send + Sync>>,
-    _master: Option<Box<dyn portable_pty::MasterPty + Send>>,
+    master: Option<Box<dyn portable_pty::MasterPty + Send>>,
 }
 
 pub struct SpawnPty {
@@ -67,6 +72,7 @@ pub struct SpawnPty {
 impl Pane {
     pub fn spawn(
         id: String,
+        id_bytes: [u8; 16],
         tab_id: String,
         workspace_id: String,
         peel_depth: u32,
@@ -139,6 +145,7 @@ impl Pane {
 
         Ok(Self {
             id,
+            id_bytes,
             tab_id,
             workspace_id,
             cwd: opts.cwd,
@@ -152,8 +159,31 @@ impl Pane {
             grid,
             writer: Some(writer),
             child: Some(child),
-            _master: Some(pair.master),
+            master: Some(pair.master),
         })
+    }
+
+    pub fn resize(&mut self, cols: u16, rows: u16) -> Result<(), MuxError> {
+        let cols = cols.max(1);
+        let rows = rows.max(1);
+        if let Some(master) = self.master.as_mut() {
+            master
+                .resize(PtySize {
+                    rows,
+                    cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+                .map_err(|e| {
+                    MuxError::rpc(
+                        "io",
+                        &format!("pty resize failed: {e}"),
+                        "Retry the resize from the TUI",
+                    )
+                })?;
+        }
+        self.grid.lock().expect("grid").resize(cols, rows);
+        Ok(())
     }
 
     pub fn write_input(&mut self, bytes: &[u8]) -> Result<(), MuxError> {
@@ -170,7 +200,7 @@ impl Pane {
             let _ = child.kill();
         }
         self.writer.take();
-        self._master.take();
+        self.master.take();
         self.child.take();
     }
 }
