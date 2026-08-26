@@ -108,6 +108,8 @@ export interface DecideTemplatesInput {
   seen: Set<string>;
   headline?: string;
   overview?: string;
+  /** Per emitting pane. Takes precedence over workspace-level headline/overview. */
+  semanticsByPane?: ReadonlyMap<string, { headline: string; overview: string }>;
   now?: number;
   closedAt?: ReadonlyMap<string, number>;
 }
@@ -122,9 +124,16 @@ export function rememberCallId(seen: Set<string>, callId: string): void {
   }
 }
 
+function semanticsFor(
+  start: ToolStart,
+  input: DecideTemplatesInput,
+): { headline: string; overview: string } {
+  const pane = input.semanticsByPane?.get(start.paneId);
+  if (pane) return pane;
+  return { headline: input.headline ?? "", overview: input.overview ?? "" };
+}
+
 export function decideTemplates(input: DecideTemplatesInput): TemplateAct[] {
-  const headline = input.headline ?? "";
-  const overview = input.overview ?? "";
   const occupying = new Set(
     input.live.filter((l) => l.workspaceId === input.workspaceId).map((l) => l.templateId),
   );
@@ -139,6 +148,7 @@ export function decideTemplates(input: DecideTemplatesInput): TemplateAct[] {
   for (const start of input.starts) {
     if (input.seen.has(start.callId)) continue;
     rememberCallId(input.seen, start.callId);
+    const { headline, overview } = semanticsFor(start, input);
     const matched = matchTemplate(start.command, headline, overview);
     if (!matched) continue;
     if (occupying.has(matched.id)) continue;
@@ -150,6 +160,7 @@ export function decideTemplates(input: DecideTemplatesInput): TemplateAct[] {
       argv: idleShellArgv(),
       workspaceId: input.workspaceId,
       paneId: start.paneId,
+      callId: start.callId,
       focus: false,
     });
   }
@@ -237,8 +248,17 @@ export class TemplateEngine {
   private readonly seen = new Set<string>();
   private readonly closedAt = new Map<string, number>();
   private readonly livePaneIds = new Map<string, string>();
+  private pending: ToolStart[] = [];
 
   constructor(private readonly gateway: MuxGateway) {}
+
+  private takePending(starts: ToolStart[]): ToolStart[] {
+    const byId = new Map<string, ToolStart>();
+    for (const start of this.pending) byId.set(start.callId, start);
+    for (const start of starts) byId.set(start.callId, start);
+    this.pending = [];
+    return [...byId.values()];
+  }
 
   syncLive(
     panes: Array<{ paneId: string; workspaceId?: string; templateId?: string | null }>,
@@ -267,27 +287,40 @@ export class TemplateEngine {
     starts: ToolStart[];
     headline?: string;
     overview?: string;
+    semanticsByPane?: ReadonlyMap<string, { headline: string; overview: string }>;
     now: number;
   }): Promise<void> {
     const live = this.syncLive(opts.panes, opts.now);
+    const starts = this.takePending(opts.starts);
     const acts = decideTemplates({
       workspaceId: opts.workspaceId,
       live,
-      starts: opts.starts,
+      starts,
       seen: this.seen,
       headline: opts.headline,
       overview: opts.overview,
+      semanticsByPane: opts.semanticsByPane,
       now: opts.now,
       closedAt: this.closedAt,
     });
-    const spawned = await applyTemplateActs(
-      this.gateway,
-      acts,
-      new Map(opts.panes.map((p) => [p.paneId, { cwd: p.cwd }])),
-    );
+    const parents = new Map(opts.panes.map((p) => [p.paneId, { cwd: p.cwd }]));
+    const startByCallId = new Map(starts.map((s) => [s.callId, s]));
     for (const act of acts) {
-      const hit = spawned.find((s) => s.templateId === act.templateId);
-      if (hit) this.livePaneIds.set(liveKey(act.workspaceId, act.templateId), hit.paneId);
+      try {
+        const cwd = parents.get(act.paneId)?.cwd ?? process.cwd();
+        const result = await this.gateway.spawn({
+          argv: act.argv,
+          cwd,
+          tab: { mode: "new", name: act.title },
+          focus: false,
+          templateId: act.templateId,
+        });
+        this.livePaneIds.set(liveKey(act.workspaceId, act.templateId), result.paneId);
+      } catch {
+        this.seen.delete(act.callId);
+        const start = startByCallId.get(act.callId);
+        if (start) this.pending.push(start);
+      }
     }
   }
 }

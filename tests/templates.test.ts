@@ -20,6 +20,7 @@ import {
   isTemplateId,
   parseToolStarts,
   reviewHit,
+  TemplateEngine,
   templateSpawnOpts,
 } from "../src/services/templates.js";
 import { FakeMuxGateway } from "../src/services/mux-gateway.js";
@@ -188,6 +189,34 @@ describe("review template", () => {
     });
     expect(acts).toEqual([]);
   });
+
+  it("reviewHit uses the emitting pane's semantics, not a workspace-wide headline", () => {
+    const siblingWouldHit = decideTemplates({
+      workspaceId: "ws_1",
+      live: [],
+      starts: [{ callId: "a", command: "gh pr diff", paneId: "p_a" }],
+      seen: new Set(),
+      headline: "fix login",
+      overview: "open PR 12",
+      semanticsByPane: new Map([
+        ["p_a", { headline: "wiring checkout", overview: "tests going green" }],
+      ]),
+    });
+    expect(siblingWouldHit).toEqual([]);
+
+    const emitterHits = decideTemplates({
+      workspaceId: "ws_1",
+      live: [],
+      starts: [{ callId: "b", command: "gh pr diff", paneId: "p_a" }],
+      seen: new Set(),
+      headline: "wiring checkout",
+      overview: "tests going green",
+      semanticsByPane: new Map([
+        ["p_a", { headline: "fix login", overview: "open PR 12" }],
+      ]),
+    });
+    expect(emitterHits[0]?.title).toBe("review");
+  });
 });
 
 describe("parseToolStarts", () => {
@@ -313,6 +342,99 @@ describe("SidecarDaemon templates", () => {
     expect(gw.spawned[1]!.opts.tab).toEqual({ mode: "new", name: "logs" });
     expect(gw.spawned[1]!.opts.focus).toBe(false);
     expect(gw.focusedPaneId("c1")).toBe(parent.paneId);
+  });
+
+  it("review uses the emitting pane's semantics, not a sibling's", async () => {
+    const gw = new FakeMuxGateway();
+    const emitter = await gw.spawn({ cwd: "/app", argv: ["claude"], tab: { mode: "new", name: "agent-a" } });
+    const sibling = await gw.spawn({ cwd: "/app", argv: ["claude"], tab: { mode: "new", name: "agent-b" } });
+    const model = new WorkspaceModel();
+    let round = 0;
+
+    class PaneSensor implements Sensor {
+      readonly kind = "agent" as const;
+      constructor(private id: PaneIdentity) {}
+      async observe(now: number): Promise<Observation> {
+        const toolStarts =
+          round >= 1 && this.id.paneId === emitter.paneId
+            ? [{ callId: "pr1", command: "gh pr diff", paneId: this.id.paneId }]
+            : [];
+        return {
+          paneId: this.id.paneId,
+          kind: "agent",
+          ts: now,
+          tailLines: [],
+          lastActivityTs: now,
+          toolStarts,
+        };
+      }
+      async teardown(): Promise<void> {}
+    }
+
+    const d = new SidecarDaemon({
+      gateway: gw,
+      model,
+      now: () => 100_000,
+      makeSensor: (id) => new PaneSensor(id),
+    });
+    await d.tickOnce();
+    model.applySemantics(emitter.paneId, {
+      label: "wiring checkout", card: "tests going green", fingerprint: "a", updatedAt: 1, stale: false,
+    });
+    model.applySemantics(sibling.paneId, {
+      label: "fix login", card: "open PR 12", fingerprint: "b", updatedAt: 1, stale: false,
+    });
+    round = 1;
+    await d.tickOnce();
+    expect(gw.spawned.some((s) => s.opts.templateId === "review")).toBe(false);
+
+    const d2gw = new FakeMuxGateway();
+    const e2 = await d2gw.spawn({ cwd: "/app", argv: ["claude"], tab: { mode: "new", name: "agent-a" } });
+    const s2 = await d2gw.spawn({ cwd: "/app", argv: ["claude"], tab: { mode: "new", name: "agent-b" } });
+    const model2 = new WorkspaceModel();
+    let round2 = 0;
+    class PaneSensor2 implements Sensor {
+      readonly kind = "agent" as const;
+      constructor(private id: PaneIdentity) {}
+      async observe(now: number): Promise<Observation> {
+        const toolStarts =
+          round2 >= 1 && this.id.paneId === e2.paneId
+            ? [{ callId: "pr2", command: "gh pr diff", paneId: this.id.paneId }]
+            : [];
+        return {
+          paneId: this.id.paneId, kind: "agent", ts: now, tailLines: [], lastActivityTs: now, toolStarts,
+        };
+      }
+      async teardown(): Promise<void> {}
+    }
+    const d2 = new SidecarDaemon({
+      gateway: d2gw, model: model2, now: () => 200_000, makeSensor: (id) => new PaneSensor2(id),
+    });
+    await d2.tickOnce();
+    model2.applySemantics(e2.paneId, {
+      label: "fix login", card: "open PR 12", fingerprint: "a", updatedAt: 1, stale: false,
+    });
+    model2.applySemantics(s2.paneId, {
+      label: "wiring checkout", card: "tests going green", fingerprint: "b", updatedAt: 1, stale: false,
+    });
+    round2 = 1;
+    await d2.tickOnce();
+    expect(d2gw.spawned.some((s) => s.opts.templateId === "review")).toBe(true);
+  });
+});
+
+describe("TemplateEngine spawn failure", () => {
+  it("does not burn callId when spawn fails; retries on the next apply", async () => {
+    const gw = new FakeMuxGateway();
+    const parent = await gw.spawn({ cwd: "/repo", argv: ["claude"], tab: { mode: "new", name: "agent" } });
+    gw.failNextSpawns = 1;
+    const engine = new TemplateEngine(gw);
+    const panes = [{ paneId: parent.paneId, cwd: "/repo", workspaceId: "ws_test", templateId: null }];
+    const starts = [{ callId: "c1", command: "pnpm test", paneId: parent.paneId }];
+    await engine.apply({ workspaceId: "ws_test", panes, starts, now: 1 });
+    expect(gw.spawned.filter((s) => s.opts.templateId === "tests")).toHaveLength(0);
+    await engine.apply({ workspaceId: "ws_test", panes, starts: [], now: 2 });
+    expect(gw.spawned.some((s) => s.opts.templateId === "tests")).toBe(true);
   });
 });
 

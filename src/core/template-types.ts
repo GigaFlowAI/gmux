@@ -38,6 +38,7 @@ export interface TemplateAct {
   argv: string[];
   workspaceId: string;
   paneId: string;
+  callId: string;
   focus: false;
 }
 

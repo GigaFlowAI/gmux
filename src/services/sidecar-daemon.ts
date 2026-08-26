@@ -159,17 +159,18 @@ export class SidecarDaemon {
     const entryById = new Map(snap.panes.map((p) => [p.identity.paneId, p]));
     for (const [workspaceId, panes] of byWs) {
       const starts: ToolStart[] = [];
-      let headline = "";
-      let overview = "";
+      const semanticsByPane = new Map<string, { headline: string; overview: string }>();
       for (const pane of panes) {
         const obs = obsByPane.get(pane.paneId);
         if (obs?.toolStarts) starts.push(...obs.toolStarts);
         const sem = entryById.get(pane.paneId)?.semantics;
-        if (sem?.label) headline = sem.label;
-        if (sem?.card) overview = sem.card ?? overview;
+        semanticsByPane.set(pane.paneId, {
+          headline: sem?.label ?? "",
+          overview: sem?.card ?? "",
+        });
       }
       try {
-        await this.templates.apply({ workspaceId, panes, starts, headline, overview, now });
+        await this.templates.apply({ workspaceId, panes, starts, semanticsByPane, now });
       } catch {
         /* a template spawn failure must never abort the tick */
       }

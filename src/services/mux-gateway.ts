@@ -45,6 +45,8 @@ export class FakeMuxGateway implements MuxGateway {
   private nextPid = 10_000;
   /** When set, spawn({focus:true}) updates this client's focusedPaneId. */
   private thisClientId: string | null = null;
+  /** Test seam: next N spawn() calls throw before creating a pane. */
+  failNextSpawns = 0;
 
   setThisClient(clientId: string | null): void {
     this.thisClientId = clientId;
@@ -87,6 +89,10 @@ export class FakeMuxGateway implements MuxGateway {
   }
 
   async spawn(opts: SpawnOpts): Promise<{ paneId: string; tabId: string }> {
+    if (this.failNextSpawns > 0) {
+      this.failNextSpawns -= 1;
+      throw new Error("spawn failed");
+    }
     let tabId: string;
     if (opts.tab?.mode === "existing") {
       tabId = opts.tab.tabId;
