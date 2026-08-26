@@ -60,8 +60,26 @@ async fn guardian_broadcast_sends_only_to_agent_panes() {
     let h = harness::start().await;
     let agent = h.spawn_shell("/tmp").await;
     let shell = h.spawn_shell("/tmp").await;
-    h.set_harness(&agent.pane_id, Some("claude-code"));
+    h.report_identity(&agent.pane_id, Some("claude-code"), Some("s_1"));
     let sent = h.guardian_broadcast("slow down\n");
     assert_eq!(sent, vec![agent.pane_id]);
     assert!(!sent.contains(&shell.pane_id));
+}
+
+#[tokio::test]
+async fn guardian_broadcast_delivers_to_harness_and_session_id() {
+    let h = harness::start().await;
+    let agent = h.spawn_shell("/tmp").await;
+    let shell = h.spawn_shell("/tmp").await;
+    let harness_only = h.spawn_shell("/tmp").await;
+    h.report_identity(&agent.pane_id, Some("claude-code"), Some("s_web"));
+    h.report_identity(&harness_only.pane_id, Some("claude-code"), None);
+    let msg = "slow down\n";
+    let sent = h.guardian_broadcast(msg);
+    assert_eq!(sent, vec![agent.pane_id.clone()]);
+    assert!(!sent.contains(&shell.pane_id));
+    assert!(!sent.contains(&harness_only.pane_id));
+    assert_eq!(h.last_input(&agent.pane_id), msg);
+    assert_eq!(h.last_input(&shell.pane_id), "");
+    assert_eq!(h.last_input(&harness_only.pane_id), "");
 }

@@ -1,9 +1,11 @@
 /**
  * Intel sidecar tick loop against `MuxGateway` (not tmux).
  *
- * Mux owns layout + identity. This process patches `state` / `semantics` /
- * `resources` / `guardianLog` by `paneId`. `session.snapshot` is mux-assembled
- * — there is no second snapshot socket on `daemon.sock`.
+ * Mux owns layout (tab/cwd/pid). This process patches `state` / `semantics` /
+ * `resources` / `guardianLog` and resolved agent identity (`harness` /
+ * `sessionId`) by `paneId` so mux `guardian.broadcast` can target agents.
+ * `session.snapshot` is mux-assembled — there is no second snapshot socket on
+ * `daemon.sock`.
  */
 
 import type { Observation, PaneEntry, PaneIdentity } from "../core/gmux-types.js";
@@ -28,7 +30,7 @@ export interface SidecarDaemonDeps {
   resolveAgents?: (present: PaneIdentity[]) => string[];
   /** When set (the live MuxClient), patches are pushed to mux by paneId. */
   report?: MuxClient["reportSemantics"];
-  /** Intel → mux `guardian.broadcast` (mux filters to harness != null). Never `pane.send_keys`. */
+  /** Intel → mux `guardian.broadcast` (mux filters to harness && sessionId). Never `pane.send_keys`. */
   broadcast?: (message: string) => Promise<void>;
 }
 
@@ -103,6 +105,7 @@ export class SidecarDaemon {
             if (!this.deps.resolveAgents || !agentIdSet.has(p.identity.paneId) || p.identity.harness) return p;
             return { ...p, identity: { ...p.identity, harness: "test-agent", sessionId: p.identity.paneId } };
           });
+          await this.reportIdentity(panes);
           const decision = this.deps.guardian.decide(host, panes, now);
           if (decision.action !== "none") {
             if (decision.action === "broadcast") {
@@ -130,6 +133,18 @@ export class SidecarDaemon {
     await this.pushPatches();
   }
 
+  private async reportIdentity(panes: PaneEntry[]): Promise<void> {
+    const report = this.deps.report;
+    if (!report) return;
+    for (const pane of panes) {
+      await report({
+        paneId: pane.identity.paneId,
+        harness: pane.identity.harness,
+        sessionId: pane.identity.sessionId,
+      }).catch(() => {});
+    }
+  }
+
   private async pushPatches(): Promise<void> {
     const report = this.deps.report;
     if (!report) return;
@@ -140,6 +155,8 @@ export class SidecarDaemon {
         state: pane.state,
         semantics: pane.semantics,
         resources: pane.resources,
+        harness: pane.identity.harness,
+        sessionId: pane.identity.sessionId,
       }).catch(() => {});
     }
     const first = snap.panes[0];

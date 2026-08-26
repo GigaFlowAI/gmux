@@ -149,6 +149,23 @@ describe("MuxClient", () => {
     expect(result).toMatchObject({ extractor: "claude-code", confidence: "high", text: "also fix the webhook" });
   });
 
+  it("reportSemantics includes harness and sessionId", async () => {
+    const pair = await loopback();
+    cleanup = pair.close;
+    const { lines } = attachMux(pair.peer, (req) =>
+      req.method === "hello" ? { ok: true, class: "intel" } : { ok: true },
+    );
+    const client = new MuxClient(pair.client);
+    await client.hello("tok_test");
+    await client.reportSemantics({ paneId: "p_1", harness: "claude-code", sessionId: "s_web" });
+    expect(lines.some((l) =>
+      l.method === "pane.report_semantics"
+      && l.params?.harness === "claude-code"
+      && l.params?.sessionId === "s_web"
+    )).toBe(true);
+    await client.close();
+  });
+
   it("sends guardian.broadcast not pane.send_keys", async () => {
     const pair = await loopback();
     cleanup = pair.close;

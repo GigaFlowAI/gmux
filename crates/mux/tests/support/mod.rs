@@ -271,7 +271,35 @@ impl Harness {
             None,
             None,
             None,
+            None,
+            None,
         );
+    }
+
+    pub fn report_identity(&self, pane_id: &str, harness: Option<&str>, session_id: Option<&str>) {
+        self.mux.lock().unwrap().report_semantics(
+            pane_id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(harness.map(str::to_string)),
+            Some(session_id.map(str::to_string)),
+        );
+    }
+
+    pub fn last_input(&self, pane_id: &str) -> String {
+        String::from_utf8_lossy(
+            &self.mux
+                .lock()
+                .unwrap()
+                .panes
+                .get(pane_id)
+                .expect("pane")
+                .last_input,
+        )
+        .into_owned()
     }
 
     pub fn set_intel_connected(&self, up: bool) {

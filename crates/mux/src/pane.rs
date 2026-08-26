@@ -56,6 +56,8 @@ pub struct Pane {
     pub session_id: Option<String>,
     pub template_id: Option<String>,
     pub grid: Arc<Mutex<Grid>>,
+    /// Raw bytes last written via `write_input` / `send_keys` (tests + peel).
+    pub last_input: Vec<u8>,
     writer: Option<Box<dyn Write + Send>>,
     child: Option<Box<dyn portable_pty::Child + Send + Sync>>,
     master: Option<Box<dyn portable_pty::MasterPty + Send>>,
@@ -157,6 +159,7 @@ impl Pane {
             session_id: None,
             template_id: None,
             grid,
+            last_input: Vec::new(),
             writer: Some(writer),
             child: Some(child),
             master: Some(pair.master),
@@ -187,6 +190,7 @@ impl Pane {
     }
 
     pub fn write_input(&mut self, bytes: &[u8]) -> Result<(), MuxError> {
+        self.last_input.extend_from_slice(bytes);
         self.shadow.feed(bytes);
         if let Some(writer) = self.writer.as_mut() {
             writer.write_all(bytes).map_err(MuxError::from)?;

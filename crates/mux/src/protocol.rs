@@ -664,6 +664,8 @@ async fn dispatch(
                 resources,
                 guardian_log.as_ref(),
                 host_pressure,
+                json_opt_str(&req.params, "harness"),
+                json_opt_str(&req.params, "sessionId"),
             );
             ok(&req.id, json!({"ok": true}))
         }),
@@ -1209,6 +1211,16 @@ pub fn filter_snapshot_to_workspace(snap: &mut Value, workspace_id: &str) {
                 .and_then(Value::as_str)
                 .is_some_and(|id| pane_ids.iter().any(|p| p == id))
         });
+    }
+}
+
+fn json_opt_str(params: &Value, key: &str) -> Option<Option<String>> {
+    match params.get(key) {
+        None => None,
+        Some(Value::Null) => Some(None),
+        Some(Value::String(s)) if s.is_empty() => Some(None),
+        Some(Value::String(s)) => Some(Some(s.clone())),
+        Some(_) => None,
     }
 }
 

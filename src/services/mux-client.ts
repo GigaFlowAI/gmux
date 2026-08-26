@@ -65,6 +65,9 @@ export interface IntelPatch {
   resources?: unknown;
   guardianLog?: unknown;
   hostPressure?: unknown;
+  /** Resolved agent identity — mux writes these onto the pane for guardian.broadcast. */
+  harness?: string | null;
+  sessionId?: string | null;
 }
 
 interface RpcError {

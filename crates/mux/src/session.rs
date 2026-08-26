@@ -248,12 +248,12 @@ impl Mux {
         self.write_input(pane_id, keys.as_bytes())
     }
 
-    /// Intel guardian broadcast: send_keys to panes with `harness != null` only.
+    /// Intel guardian broadcast: send_keys to panes with harness && sessionId only.
     pub fn guardian_broadcast(&mut self, message: &str) -> Vec<String> {
         let ids: Vec<String> = self
             .panes
             .values()
-            .filter(|p| p.harness.is_some())
+            .filter(|p| p.harness.is_some() && p.session_id.is_some())
             .map(|p| p.id.clone())
             .collect();
         for id in &ids {
@@ -654,7 +654,9 @@ impl Mux {
     }
 
     /// Intel patches `state` / `semantics` / `resources` / `guardianLog` by paneId.
-    /// Layout and identity stay mux-owned. Unknown paneIds are ignored (pane vanished).
+    /// Layout (tab/cwd/pid) stays mux-owned. Intel may patch resolved agent
+    /// identity (`harness` / `sessionId`) so `guardian.broadcast` can target
+    /// known agents. Unknown paneIds are ignored (pane vanished).
     pub fn report_semantics(
         &mut self,
         pane_id: &str,
@@ -663,7 +665,17 @@ impl Mux {
         resources: Option<serde_json::Value>,
         guardian_log: Option<&serde_json::Value>,
         host_pressure: Option<serde_json::Value>,
+        harness: Option<Option<String>>,
+        session_id: Option<Option<String>>,
     ) {
+        if let Some(pane) = self.panes.get_mut(pane_id) {
+            if let Some(h) = harness {
+                pane.harness = h;
+            }
+            if let Some(s) = session_id {
+                pane.session_id = s;
+            }
+        }
         if self.panes.contains_key(pane_id) {
             let entry = self.patches.entry(pane_id.to_string()).or_default();
             if state.is_some() {
