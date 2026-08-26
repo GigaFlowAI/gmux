@@ -954,6 +954,28 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn ctrl_shift_t_maps_to_peel_alias() {
+        let lower = KeyEvent::new(
+            KeyCode::Char('t'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        );
+        assert_eq!(key_to_keymap(&lower), keymap::Key::Ctrl('t'));
+        assert_eq!(
+            keymap::handle(Mode::Pty, key_to_keymap(&lower)),
+            (Mode::Pty, Action::Peel)
+        );
+        let upper = KeyEvent::new(
+            KeyCode::Char('T'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        );
+        assert_eq!(key_to_keymap(&upper), keymap::Key::Ctrl('T'));
+        assert_eq!(
+            keymap::handle(Mode::Pty, key_to_keymap(&upper)),
+            (Mode::Pty, Action::Peel)
+        );
+    }
+
+    #[test]
     fn peel_error_does_not_clear_snapshot_in_flight() {
         let mut flight = SnapFlight::default();
         flight.sent("5");

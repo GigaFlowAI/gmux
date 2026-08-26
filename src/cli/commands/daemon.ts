@@ -12,7 +12,7 @@ import type { Command } from "commander";
 
 import { GmuxError } from "../../core/errors.js";
 import type { GmuxConfig } from "../../core/gmux-types.js";
-import { readConfig, resolveGmuxConfig } from "../../services/config.js";
+import { readConfig, resolveAgentHarness, resolveGmuxConfig } from "../../services/config.js";
 import { Daemon, type DaemonDeps } from "../../services/daemon.js";
 import { readSnapshotFile } from "../../services/daemon-client.js";
 import {
@@ -179,9 +179,10 @@ export {
 // --- Command ------------------------------------------------------------
 
 async function runSidecarForeground(): Promise<void> {
-  const client = await MuxClient.connect(undefined, undefined, liveIntelHandlers());
   const config = await readConfig();
   const gmuxCfg = resolveGmuxConfig(config);
+  const harness = resolveAgentHarness(config);
+  const client = await MuxClient.connect(undefined, undefined, liveIntelHandlers(), harness);
   const provider = await defaultLabelProvider();
   const model = new WorkspaceModel();
   const deps = buildSidecarDeps(

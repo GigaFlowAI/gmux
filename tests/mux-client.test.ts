@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   CLASSIFY_TIMEOUT_MS,
   EXTRACT_TIMEOUT_MS,
+  liveIntelHandlers,
   MuxClient,
   ORGANIZE_TIMEOUT_MS,
   PACK_TIMEOUT_MS,
@@ -136,6 +138,15 @@ describe("MuxClient", () => {
     expect(msg.id).toBe("ex_1");
     expect(msg.result).toMatchObject({ extractor: "shadow", confidence: "low" });
     await client.close();
+  });
+
+  it("live prompt.extract runs the TS extractor on a boxed grid", async () => {
+    const handlers = liveIntelHandlers();
+    const grid = JSON.parse(
+      readFileSync(new URL("./fixtures/grids/claude-code/boxed.json", import.meta.url), "utf8"),
+    );
+    const result = await handlers["prompt.extract"]!({ grid });
+    expect(result).toMatchObject({ extractor: "claude-code", confidence: "high", text: "also fix the webhook" });
   });
 
   it("sends guardian.broadcast not pane.send_keys", async () => {

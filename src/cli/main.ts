@@ -35,6 +35,7 @@ import { registerResume } from "./commands/resume.js";
 import { registerAttach } from "./commands/attach.js";
 import { registerRun } from "./commands/run.js";
 import { registerShow } from "./commands/show.js";
+import { registerPeel } from "./commands/peel.js";
 import { isMuxControlCommand, registerSpawn } from "./commands/spawn.js";
 import { registerSummarize } from "./commands/summarize.js";
 import { registerTmux } from "./commands/tmux.js";
@@ -142,6 +143,7 @@ registerWatch(program);
 registerDaemon(program);
 registerAttach(program);
 registerSpawn(program);
+registerPeel(program);
 
 async function main(): Promise<void> {
   try {

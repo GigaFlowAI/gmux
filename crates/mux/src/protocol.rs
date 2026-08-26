@@ -116,6 +116,17 @@ impl IntelHub {
             }
         }
     }
+
+    async fn extract(&self, grid: Value) -> Result<ExtractReply, ExtractError> {
+        match self
+            .call("prompt.extract", json!({ "grid": grid }), EXTRACT_TIMEOUT)
+            .await
+        {
+            Ok(v) => ExtractReply::from_value(&v).ok_or(ExtractError::Malformed),
+            Err(e) if e.code() == "timeout" => Err(ExtractError::Timeout),
+            Err(_) => Err(ExtractError::Down),
+        }
+    }
 }
 
 fn _deadline_table() {
@@ -130,6 +141,7 @@ fn _deadline_table() {
 
 use crate::lock::Lock;
 use crate::paths::Paths;
+use crate::peel::{ExtractError, ExtractReply, PeelSpawn};
 use crate::peer::{self, CallerClass};
 use crate::session::{Mux, MuxError, SpawnOpts, TabSpec};
 
@@ -533,40 +545,7 @@ async fn dispatch(
                 Err(err) => err_of(&req.id, &err),
             }
         }),
-        "peel" => gated(conn, req, "peel", |conn| {
-            let mut guard = mux.lock().expect("mux");
-            let result = if let Ok(CallerClass::Pane) = conn.class {
-                let Some(pane_id) = conn.env_pane_id.as_deref() else {
-                    return error(
-                        &req.id,
-                        "permission_denied",
-                        "pane peel requires GMUX_PANE_ID",
-                        "A descendant of a pane pid peels from self — unset GMUX_PANE_ID is permission_denied",
-                    );
-                };
-                crate::peel::peel_from_pane(&mut guard, pane_id, None)
-            } else {
-                let client_id = req
-                    .params
-                    .get("clientId")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-                    .or_else(|| conn.client_id.clone());
-                let Some(client_id) = client_id else {
-                    return error(
-                        &req.id,
-                        "invalid_request",
-                        "peel needs a clientId",
-                        "Attach a TUI or pass params.clientId",
-                    );
-                };
-                crate::peel::peel(&mut guard, &client_id)
-            };
-            match result {
-                Ok(spawned) => ok(&req.id, json!(spawned)),
-                Err(err) => err_of(&req.id, &err),
-            }
-        }),
+        "peel" => handle_peel(mux, hub, conn, req).await,
         "events.subscribe" => gated(conn, req, "events.subscribe", |conn| {
             if conn.subscribed {
                 return ok(&req.id, json!({"ok": true}));
@@ -754,6 +733,22 @@ async fn handle_hello(
             Ok(pid) => {
                 guard.intel_pid = Some(pid);
                 guard.intel_connected = true;
+                if let Some(argv) = req
+                    .params
+                    .get("agentHarness")
+                    .and_then(Value::as_array)
+                {
+                    let argv: Vec<String> = argv
+                        .iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect();
+                    if !argv.is_empty() {
+                        guard.cached_harness_argv = Some(argv);
+                        if guard.status.as_deref() == Some("no agent harness — gmux setup") {
+                            guard.status = None;
+                        }
+                    }
+                }
                 Ok(pid)
             }
             Err(err) => Err(err),
@@ -770,6 +765,145 @@ async fn handle_hello(
         }
         Err(err) => error(&req.id, "permission_denied", &err.to_string(), err.fix()),
     }
+}
+
+async fn handle_peel(
+    mux: &Arc<Mutex<Mux>>,
+    hub: &Arc<IntelHub>,
+    conn: &mut Conn,
+    req: &Request,
+) -> Value {
+    let denied = gated(conn, req, "peel", |_| json!(null));
+    if denied.get("error").is_some() {
+        return denied;
+    }
+
+    let spawned = {
+        let mut guard = mux.lock().expect("mux");
+        if let Ok(CallerClass::Pane) = conn.class {
+            let Some(pane_id) = conn.env_pane_id.clone() else {
+                return error(
+                    &req.id,
+                    "permission_denied",
+                    "pane peel requires GMUX_PANE_ID",
+                    "A descendant of a pane pid peels from self — unset GMUX_PANE_ID is permission_denied",
+                );
+            };
+            crate::peel::peel_spawn(&mut guard, &pane_id, None)
+        } else if let Some(pane_id) = req
+            .params
+            .get("paneId")
+            .and_then(Value::as_str)
+            .or_else(|| req.params.get("from").and_then(Value::as_str))
+        {
+            crate::peel::peel_spawn(&mut guard, pane_id, conn.client_id.as_deref())
+        } else if let Ok(CallerClass::Tui) = conn.class {
+            let Some(client_id) = conn
+                .client_id
+                .clone()
+                .or_else(|| {
+                    req.params
+                        .get("clientId")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+            else {
+                return error(
+                    &req.id,
+                    "invalid_request",
+                    "peel needs a clientId",
+                    "Attach a TUI or pass params.clientId",
+                );
+            };
+            crate::peel::peel_spawn_for_client(&mut guard, &client_id)
+        } else {
+            let parent = req
+                .params
+                .get("clientId")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| conn.client_id.clone())
+                .and_then(|id| {
+                    guard
+                        .focused(&id)
+                        .map(str::to_string)
+                })
+                .or_else(|| guard.last_tui_focus());
+            let Some(parent) = parent else {
+                return error(
+                    &req.id,
+                    "invalid_request",
+                    "peel needs a focused pane",
+                    "Attach a TUI or pass --from <paneId>",
+                );
+            };
+            crate::peel::peel_spawn(&mut guard, &parent, conn.client_id.as_deref())
+        }
+    };
+
+    let PeelSpawn {
+        spawned,
+        parent_id,
+        seed0,
+        harness_missing,
+    } = match spawned {
+        Ok(s) => s,
+        Err(err) => return err_of(&req.id, &err),
+    };
+
+    let wait_slow = matches!(conn.class, Ok(CallerClass::Cli));
+    let child_id = spawned.pane_id.clone();
+    let tab_id = spawned.tab_id.clone();
+    let extractor0 = crate::peel::shadow_extractor(&seed0);
+
+    // No interactive harness: spawn $SHELL and do not submit into it.
+    if harness_missing {
+        return ok(
+            &req.id,
+            json!({
+                "paneId": child_id,
+                "tabId": tab_id,
+                "submitted": false,
+                "extractor": extractor0,
+            }),
+        );
+    }
+
+    let mux2 = mux.clone();
+    let hub2 = hub.clone();
+    if wait_slow {
+        let slow = crate::peel::peel_slow(mux2, parent_id, child_id.clone(), seed0, |grid| {
+            let hub = hub2.clone();
+            async move { hub.extract(grid).await }
+        })
+        .await;
+        return ok(
+            &req.id,
+            json!({
+                "paneId": child_id,
+                "tabId": tab_id,
+                "submitted": slow.submitted,
+                "extractor": slow.extractor,
+            }),
+        );
+    }
+
+    tokio::spawn(async move {
+        let _ = crate::peel::peel_slow(mux2, parent_id, child_id, seed0, |grid| {
+            let hub = hub2.clone();
+            async move { hub.extract(grid).await }
+        })
+        .await;
+    });
+    ok(
+        &req.id,
+        json!({
+            "paneId": spawned.pane_id,
+            "tabId": spawned.tab_id,
+            "submitted": false,
+            "extractor": extractor0,
+        }),
+    )
 }
 
 async fn handle_attach(mux: &Arc<Mutex<Mux>>, conn: &mut Conn, req: &Request) -> Value {

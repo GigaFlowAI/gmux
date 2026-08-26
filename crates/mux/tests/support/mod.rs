@@ -62,12 +62,70 @@ impl Harness {
             .unwrap();
     }
 
+    /// Seed the shadow buffer without writing the PTY (so the grid stays empty).
+    pub fn set_shadow(&self, pane_id: &str, text: &str) {
+        let mut mux = self.mux.lock().unwrap();
+        let pane = mux.panes.get_mut(pane_id).expect("pane");
+        pane.shadow.clear();
+        pane.shadow.feed(text.as_bytes());
+    }
+
     pub async fn peel(&self, client_id: &str) -> Result<Spawned, MuxError> {
         gmuxd::peel::peel(&mut self.mux.lock().unwrap(), client_id)
     }
 
     pub async fn peel_from_pane(&self, pane_id: &str) -> Result<Spawned, MuxError> {
         gmuxd::peel::peel_from_pane(&mut self.mux.lock().unwrap(), pane_id, None)
+    }
+
+    pub fn peel_spawn(&self, client_id: &str) -> Result<gmuxd::peel::PeelSpawn, MuxError> {
+        gmuxd::peel::peel_spawn_for_client(&mut self.mux.lock().unwrap(), client_id)
+    }
+
+    pub async fn peel_slow(
+        &self,
+        parent_id: &str,
+        child_id: &str,
+        seed0: &str,
+        extracted: Result<gmuxd::peel::ExtractReply, gmuxd::peel::ExtractError>,
+    ) -> gmuxd::peel::PeelSlowResult {
+        let extracted = extracted;
+        gmuxd::peel::peel_slow(
+            self.mux.clone(),
+            parent_id.to_string(),
+            child_id.to_string(),
+            seed0.to_string(),
+            move |_grid| async move { extracted },
+        )
+        .await
+    }
+
+    pub fn status(&self) -> Option<String> {
+        self.mux.lock().unwrap().status.clone()
+    }
+
+    pub fn clear_harness_argv(&self) {
+        self.mux.lock().unwrap().cached_harness_argv = None;
+    }
+
+    pub fn argv(&self, pane_id: &str) -> Vec<String> {
+        self.mux
+            .lock()
+            .unwrap()
+            .panes
+            .get(pane_id)
+            .map(|p| p.argv.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn set_peel_depth(&self, pane_id: &str, depth: u32) {
+        self.mux
+            .lock()
+            .unwrap()
+            .panes
+            .get_mut(pane_id)
+            .expect("pane")
+            .peel_depth = depth;
     }
 
     pub fn focused(&self, client_id: &str) -> String {

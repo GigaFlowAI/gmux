@@ -234,6 +234,11 @@ export interface GmConfig {
    * `gmux setup` offers it, and it is how you decline the token spend outright.
    */
   provider: ProviderChoice | null;
+  /**
+   * Interactive harness for new panes / peels. Optional; absent means undefined,
+   * never "use provider". Present-but-malformed makes the whole file untrusted.
+   */
+  agentHarness?: ProviderChoice;
   /** Keep the recent window summarized in the background. */
   autoSummarize: boolean;
   /** gmux daemon + guardian settings. Absent on configs written before gmux. */

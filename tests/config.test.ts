@@ -12,6 +12,7 @@ import { dirname } from "node:path";
 import { configPath } from "../src/core/paths.js";
 import { CONFIG_VERSION, type GmConfig } from "../src/core/types.js";
 import {
+  AGENT_HARNESS_ENV,
   CHILD_ENV,
   FALLBACK_COMMAND,
   autoSummarizeAllowed,
@@ -21,6 +22,7 @@ import {
   parseCommand,
   parseConfig,
   readConfig,
+  resolveAgentHarness,
   resolveAskCommand,
   resolveSummaryCommand,
   shouldRunSetupWizard,
@@ -182,6 +184,44 @@ describe("parseConfig", () => {
       expect(resolveSummaryCommand(corrupt, {}, claude)).toEqual(claude.summaryArgv);
       expect(autoSummarizeAllowed(corrupt)).toBe(true);
     });
+  });
+
+  describe("optional agentHarness (CONFIG_VERSION stays 1)", () => {
+    it("leaves agentHarness undefined when the key is absent", () => {
+      const parsed = parseConfig(JSON.stringify(config()));
+      expect(parsed).not.toBeNull();
+      expect(parsed!.agentHarness).toBeUndefined();
+      expect(parsed!.version).toBe(CONFIG_VERSION);
+    });
+
+    it("keeps a well-typed agentHarness without bumping version", () => {
+      const harness = { id: "claude-code", command: ["claude"] };
+      const parsed = parseConfig(JSON.stringify(config({ agentHarness: harness })));
+      expect(parsed).not.toBeNull();
+      expect(parsed!.agentHarness).toEqual(harness);
+      expect(parsed!.version).toBe(1);
+    });
+
+    it("treats a malformed agentHarness as an untrusted file", () => {
+      expect(
+        parseConfig(JSON.stringify({ version: 1, provider: null, autoSummarize: true, agentHarness: "claude-code" })),
+      ).toBeNull();
+      expect(
+        parseConfig(JSON.stringify({ version: 1, provider: null, autoSummarize: true, agentHarness: { id: "x" } })),
+      ).toBeNull();
+    });
+
+    it("does not treat a missing agentHarness as provider", () => {
+      const cfg = config({ provider: { id: "claude-code", command: ["claude", "-p"] } });
+      expect(resolveAgentHarness(cfg, { PATH: "" })).toBeNull();
+    });
+  });
+});
+
+describe("resolveAgentHarness", () => {
+  it("prefers GMUX_AGENT_HARNESS over config", () => {
+    const cfg = config({ agentHarness: { id: "codex", command: ["codex"] } });
+    expect(resolveAgentHarness(cfg, { [AGENT_HARNESS_ENV]: "claude" })).toEqual(["claude"]);
   });
 });
 

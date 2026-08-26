@@ -30,6 +30,7 @@ import { intelTokenPath, muxSocketPath } from "../core/paths.js";
 import { CLASSIFY_TIMEOUT_MS, classifyIntent, type AskIntent } from "./ask-router.js";
 import type { MuxGateway } from "./mux-gateway.js";
 import { HeuristicOrganizePlanner, LlmOrganizePlanner, ORGANIZE_TIMEOUT_MS } from "./organize.js";
+import { extractFromParams } from "./prompt-extract.js";
 
 export const EXTRACT_TIMEOUT_MS = 20;
 export const PACK_TIMEOUT_MS = 500;
@@ -146,6 +147,7 @@ export function liveIntelHandlers(opts: {
   const classify = opts.classify ?? ((prompt: string) => classifyIntent(prompt));
   const planner = opts.planner ?? new LlmOrganizePlanner(new HeuristicOrganizePlanner());
   return {
+    "prompt.extract": async (params) => extractFromParams(params),
     "classify.intent": async (params) => {
       const prompt = readPromptParam(params);
       const intent = await classify(prompt);
@@ -208,6 +210,7 @@ export class MuxClient implements MuxGateway {
     socketPath: string = muxSocketPath(),
     token?: string,
     handlers?: IntelHandlers,
+    agentHarness?: string[] | null,
   ): Promise<MuxClient> {
     const presented = token ?? (await readIntelToken());
     let sock: net.Socket;
@@ -220,7 +223,7 @@ export class MuxClient implements MuxGateway {
     }
     const client = new MuxClient(sock, handlers);
     try {
-      await client.hello(presented);
+      await client.hello(presented, agentHarness ?? undefined);
     } catch (error) {
       await client.close().catch(() => {});
       throw error;
@@ -245,8 +248,12 @@ export class MuxClient implements MuxGateway {
     return new MuxClient(sock, {});
   }
 
-  async hello(token: string): Promise<unknown> {
-    return this.request("hello", { class: "intel", token });
+  async hello(token: string, agentHarness?: string[]): Promise<unknown> {
+    return this.request("hello", {
+      class: "intel",
+      token,
+      ...(agentHarness && agentHarness.length > 0 ? { agentHarness } : {}),
+    });
   }
 
   async ping(): Promise<unknown> {

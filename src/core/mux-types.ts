@@ -29,6 +29,13 @@ export interface GridSnapshot {
   foregroundCommand: string;
 }
 
+export interface ExtractResult {
+  text: string; // empty string means "treat as empty buffer"
+  confidence: "high" | "low";
+  clearKeys: string;
+  extractor: string; // "claude-code" | "codex" | "shell" | "shadow" | "empty"
+}
+
 export interface SpawnOpts {
   cwd: string;
   argv: string[];

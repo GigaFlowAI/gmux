@@ -229,7 +229,7 @@ function printJson(data: unknown): void {
 
 /** Mux control commands must not fork the background summarizer. */
 export function isMuxControlCommand(name: string, parentName?: string): boolean {
-  if (name === "spawn" || name === "snapshot" || name === "attach") return true;
+  if (name === "spawn" || name === "snapshot" || name === "attach" || name === "peel") return true;
   if (parentName === "panes") return true;
   return false;
 }

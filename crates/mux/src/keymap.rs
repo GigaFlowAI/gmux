@@ -134,6 +134,7 @@ mod tests {
     #[test]
     fn pty_intercepts_only_ctrl_t_g_q() {
         assert_eq!(handle(Mode::Pty, Key::Ctrl('t')), (Mode::Pty, Action::Peel));
+        assert_eq!(handle(Mode::Pty, Key::Ctrl('T')), (Mode::Pty, Action::Peel));
         assert_eq!(
             handle(Mode::Pty, Key::Ctrl('g')),
             (Mode::Sidebar, Action::None)

@@ -128,6 +128,10 @@ pub struct Mux {
     pub patches: HashMap<String, IntelPatch>,
     pub guardian_log: Vec<serde_json::Value>,
     pub host_pressure: Option<serde_json::Value>,
+    /// Sidebar pin / peel UX (`couldn't clear parent prompt`, harness missing).
+    pub status: Option<String>,
+    /// Most recently attached TUI first at the end — `gmux peel` without `--from`.
+    pub tui_order: Vec<String>,
     event_tx: broadcast::Sender<Event>,
 }
 
@@ -146,6 +150,8 @@ impl Mux {
             patches: HashMap::new(),
             guardian_log: Vec::new(),
             host_pressure: None,
+            status: None,
+            tui_order: Vec::new(),
             event_tx,
         }
     }
@@ -210,6 +216,21 @@ impl Mux {
         self.clients
             .get(client_id)
             .and_then(|c| c.focused_pane_id.as_deref())
+    }
+
+    /// Focus of the most recently attached TUI, if any.
+    pub fn last_tui_focus(&self) -> Option<String> {
+        for id in self.tui_order.iter().rev() {
+            if let Some(pane) = self.focused(id) {
+                return Some(pane.to_string());
+            }
+        }
+        None
+    }
+
+    pub fn toast(&mut self, message: &str) {
+        self.status = Some(message.to_string());
+        self.emit("toast", serde_json::json!({ "message": message }));
     }
 
     pub fn write_input(&mut self, pane_id: &str, bytes: &[u8]) -> Result<(), MuxError> {
@@ -449,6 +470,8 @@ impl Mux {
             rows,
         };
         self.clients.insert(id.clone(), client);
+        self.tui_order.retain(|existing| existing != &id);
+        self.tui_order.push(id.clone());
         let cwd = cwd
             .map(Path::to_path_buf)
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
@@ -459,6 +482,7 @@ impl Mux {
     /// Detach this TUI. Does not SIGHUP panes.
     pub fn detach_client(&mut self, client_id: &str) {
         self.clients.remove(client_id);
+        self.tui_order.retain(|id| id != client_id);
         let path = self.paths.frames_socket_path(client_id);
         let _ = std::fs::remove_file(path);
     }
@@ -617,6 +641,7 @@ impl Mux {
             },
             "guardianLog": self.guardian_log,
             "hostPressure": self.host_pressure,
+            "status": self.status,
         })
     }
 

@@ -257,6 +257,11 @@ impl Model {
         if !intel_up {
             pins.push("⚠ intel down".into());
         }
+        if let Some(status) = snap.get("status").and_then(Value::as_str) {
+            if !status.is_empty() {
+                pins.push(format!("⚠ {status}"));
+            }
+        }
         if let Some(log) = snap.get("guardianLog").and_then(Value::as_array) {
             if let Some(g) = log.last() {
                 if let Some(msg) = g.get("message").and_then(Value::as_str) {
