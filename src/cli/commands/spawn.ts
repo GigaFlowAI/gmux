@@ -15,8 +15,10 @@ import { fileURLToPath } from "node:url";
 import type { Command } from "commander";
 
 import { GmuxError } from "../../core/errors.js";
+import { isTemplateId, TEMPLATE_IDS } from "../../core/template-types.js";
 import { muxLockPath, muxSocketPath } from "../../core/paths.js";
 import { SCHEMA_VERSION } from "../../core/types.js";
+import { templateSpawnOpts } from "../../services/templates.js";
 import { dim, jsonEnvelope } from "../format.js";
 
 interface RpcError {
@@ -240,15 +242,34 @@ export function registerSpawn(program: Command): void {
     .description("spawn a pane in gmuxd")
     .option("--cwd <dir>", "working directory", process.cwd())
     .option("--argv <cmd...>", "command and arguments")
+    .option("--template <id>", `idle shell titled ${TEMPLATE_IDS.join("|")}`)
     .option("--json", "emit JSON for scripts and agents")
     .argument("[argv...]", "command and arguments (default: $SHELL)")
-    .action(async (positional: string[], options: { cwd?: string; argv?: string[]; json?: boolean }) => {
-      const argv = (options.argv && options.argv.length > 0 ? options.argv : positional).filter(Boolean);
-      const result = await muxRpc("pane.spawn", {
-        cwd: options.cwd,
-        argv: argv.length > 0 ? argv : [process.env.SHELL ?? "/bin/sh"],
-        tab: { mode: "new", name: argv[0] ?? "shell" },
-      });
+    .action(async (positional: string[], options: { cwd?: string; argv?: string[]; template?: string; json?: boolean }) => {
+      let params: Record<string, unknown>;
+      if (options.template !== undefined) {
+        if (!isTemplateId(options.template)) {
+          throw new GmuxError(`unknown template "${options.template}"`, {
+            fix: `Pass --template ${TEMPLATE_IDS.join("|")}.`,
+          });
+        }
+        const opts = templateSpawnOpts(options.template, options.cwd ?? process.cwd());
+        params = {
+          cwd: opts.cwd,
+          argv: opts.argv,
+          tab: opts.tab,
+          focus: opts.focus ?? false,
+          templateId: opts.templateId ?? null,
+        };
+      } else {
+        const argv = (options.argv && options.argv.length > 0 ? options.argv : positional).filter(Boolean);
+        params = {
+          cwd: options.cwd,
+          argv: argv.length > 0 ? argv : [process.env.SHELL ?? "/bin/sh"],
+          tab: { mode: "new", name: argv[0] ?? "shell" },
+        };
+      }
+      const result = await muxRpc("pane.spawn", params);
       if (options.json) {
         printJson(result);
         return;

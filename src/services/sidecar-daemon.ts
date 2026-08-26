@@ -9,6 +9,7 @@
  */
 
 import type { Observation, PaneEntry, PaneIdentity } from "../core/gmux-types.js";
+import type { ToolStart } from "../core/mux-types.js";
 import { classifyState } from "../core/pane-state.js";
 import type { Guardian } from "./guardian.js";
 import type { MuxClient } from "./mux-client.js";
@@ -17,6 +18,7 @@ import { PaneRegistry } from "./pane-registry.js";
 import type { ResourceMonitor } from "./resources.js";
 import { makeSensor as defaultMakeSensor, type Sensor } from "./sensors.js";
 import type { SemanticWorker } from "./semantic.js";
+import { TemplateEngine } from "./templates.js";
 import type { WorkspaceModel } from "./workspace.js";
 
 export interface SidecarDaemonDeps {
@@ -32,16 +34,20 @@ export interface SidecarDaemonDeps {
   report?: MuxClient["reportSemantics"];
   /** Intel → mux `guardian.broadcast` (mux filters to harness && sessionId). Never `pane.send_keys`. */
   broadcast?: (message: string) => Promise<void>;
+  /** Idle tests/logs/review panes. Default: a TemplateEngine on this gateway. */
+  templates?: TemplateEngine | null;
 }
 
 export class SidecarDaemon {
   private registry: PaneRegistry;
   private sensors = new Map<string, Sensor>();
   private make: (id: PaneIdentity, gw: MuxGateway) => Sensor;
+  private templates: TemplateEngine | null;
 
   constructor(private readonly deps: SidecarDaemonDeps) {
     this.registry = new PaneRegistry(deps.gateway);
     this.make = deps.makeSensor ?? defaultMakeSensor;
+    this.templates = deps.templates === undefined ? new TemplateEngine(deps.gateway) : deps.templates;
   }
 
   async tickOnce(): Promise<void> {
@@ -72,7 +78,7 @@ export class SidecarDaemon {
       try {
         const obs = await sensor.observe(now);
         this.deps.model.applyState(id.paneId, classifyState(obs, now), obs.lastActivityTs, now);
-        if (this.deps.semantic) toEnqueue.push({ paneId: id.paneId, obs });
+        toEnqueue.push({ paneId: id.paneId, obs });
       } catch {
         /* a single sensor failure must never abort the whole tick */
       }
@@ -130,7 +136,44 @@ export class SidecarDaemon {
     }
 
     this.deps.model.evictGone();
+    await this.maybeSpawnTemplates(present, toEnqueue, now);
     await this.pushPatches();
+  }
+
+  private async maybeSpawnTemplates(
+    present: PaneIdentity[],
+    observations: { paneId: string; obs: Observation }[],
+    now: number,
+  ): Promise<void> {
+    if (!this.templates) return;
+    const byWs = new Map<string, PaneIdentity[]>();
+    for (const id of present) {
+      const ws = id.workspaceId;
+      if (!ws) continue;
+      const list = byWs.get(ws) ?? [];
+      list.push(id);
+      byWs.set(ws, list);
+    }
+    const obsByPane = new Map(observations.map((o) => [o.paneId, o.obs]));
+    const snap = this.deps.model.snapshot();
+    const entryById = new Map(snap.panes.map((p) => [p.identity.paneId, p]));
+    for (const [workspaceId, panes] of byWs) {
+      const starts: ToolStart[] = [];
+      let headline = "";
+      let overview = "";
+      for (const pane of panes) {
+        const obs = obsByPane.get(pane.paneId);
+        if (obs?.toolStarts) starts.push(...obs.toolStarts);
+        const sem = entryById.get(pane.paneId)?.semantics;
+        if (sem?.label) headline = sem.label;
+        if (sem?.card) overview = sem.card ?? overview;
+      }
+      try {
+        await this.templates.apply({ workspaceId, panes, starts, headline, overview, now });
+      } catch {
+        /* a template spawn failure must never abort the tick */
+      }
+    }
   }
 
   private async reportIdentity(panes: PaneEntry[]): Promise<void> {

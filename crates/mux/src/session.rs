@@ -76,6 +76,7 @@ pub struct SpawnOpts {
     pub peel_depth: u32,
     pub client_id: Option<String>,
     pub workspace_id: Option<String>,
+    pub template_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -361,7 +362,7 @@ impl Mux {
             .map(|c| (c.cols, c.rows))
             .unwrap_or((80, 24));
 
-        let pane = Pane::spawn(
+        let mut pane = Pane::spawn(
             pane_id.clone(),
             pane_bytes,
             tab_id.clone(),
@@ -375,6 +376,7 @@ impl Mux {
                 rows,
             },
         )?;
+        pane.template_id = opts.template_id.clone();
 
         {
             let ws = self
@@ -571,6 +573,7 @@ impl Mux {
                 peel_depth: 0,
                 client_id: Some(client_id.to_string()),
                 workspace_id: Some(workspace_id),
+                template_id: None,
             })?;
         } else if self.focused(client_id).is_none() {
             if let Some(pane_id) = first_pane {

@@ -290,6 +290,7 @@ export class MuxClient implements MuxGateway {
       tab: opts.tab,
       focus: opts.focus ?? false,
       peelDepth: opts.peelDepth ?? 0,
+      templateId: opts.templateId ?? null,
     })) as { paneId: string; tabId: string };
     return { paneId: result.paneId, tabId: result.tabId };
   }

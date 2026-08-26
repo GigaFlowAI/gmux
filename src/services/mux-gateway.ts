@@ -112,7 +112,7 @@ export class FakeMuxGateway implements MuxGateway {
       harness: null,
       sessionId: null,
       peelDepth: opts.peelDepth ?? 0,
-      templateId: null,
+      templateId: opts.templateId ?? null,
     };
     this.panes.push(pane);
     this.tabs.get(tabId)!.paneIds.push(paneId);

@@ -15,6 +15,7 @@ import {
   tsOf,
 } from "../src/services/sensors.js";
 import type { PaneIdentity } from "../src/core/gmux-types.js";
+import { claudeBashToolUse, codexShellFunctionCall } from "./fixtures/build.js";
 
 const ident: PaneIdentity = {
   paneId: "%1", windowId: "@1", active: false, harness: null, sessionId: null,
@@ -142,7 +143,32 @@ describe("AgentSensor", () => {
     expect(obs.awaitingInput).toBe(true);
     expect(obs.sawError).toBe(false);
     expect(obs.ended).toBe(false);
+    expect(obs.toolStarts).toEqual([]);
     await sensor.teardown();
+  });
+
+  it("fills toolStarts from Claude Bash tool_use and Codex shell function_call", async () => {
+    dir = await mkdtemp(join(tmpdir(), "gmux-sensors-"));
+    const filePath = join(dir, "session.jsonl");
+    const rows = [
+      claudeBashToolUse({ id: "toolu_bash", command: "vitest run" }),
+      { type: "user", timestamp: "2026-08-25T12:00:01.000Z", message: { content: [{ type: "tool_result", is_error: true }] } },
+      codexShellFunctionCall({ callId: "call_shell", cmd: "npm run dev" }),
+    ];
+    await writeFile(filePath, rows.map((r) => JSON.stringify(r)).join("\n") + "\n", "utf8");
+    const identity: PaneIdentity = {
+      paneId: "p_agent", windowId: null, active: true, harness: "claude-code", sessionId: "s1",
+      cwd: "/x", command: "claude", pid: 20,
+    };
+    const sensor = new AgentSensor(identity, filePath);
+    const first = await sensor.observe(1);
+    expect(first.toolStarts).toEqual([
+      { callId: "toolu_bash", command: "vitest run", paneId: "p_agent" },
+      { callId: "call_shell", command: "npm run dev", paneId: "p_agent" },
+    ]);
+    expect(first.sawError).toBe(true);
+    const second = await sensor.observe(2);
+    expect(second.toolStarts).toEqual([]);
   });
 
   it("degrades gracefully when the transcript file does not exist", async () => {

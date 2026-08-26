@@ -44,6 +44,8 @@ export interface SpawnOpts {
   /** default false. When true, sets THIS client's focusedPaneId only. */
   focus?: boolean;
   peelDepth?: number;
+  /** Catalog id when this pane was spawned as a workspace template. */
+  templateId?: string | null;
 }
 
 export interface ToolStart {

@@ -43,6 +43,27 @@ impl Harness {
                 peel_depth: 0,
                 client_id: None,
                 workspace_id: None,
+                template_id: None,
+            })
+            .unwrap()
+    }
+
+    pub async fn spawn_template(&self, cwd: &str, template_id: &str, title: &str) -> Spawned {
+        self.mux
+            .lock()
+            .unwrap()
+            .spawn(SpawnOpts {
+                cwd: cwd.into(),
+                argv: vec!["/bin/sleep".into(), "30".into()],
+                env: Default::default(),
+                tab: TabSpec::New {
+                    name: title.into(),
+                },
+                focus: false,
+                peel_depth: 0,
+                client_id: None,
+                workspace_id: None,
+                template_id: Some(template_id.into()),
             })
             .unwrap()
     }

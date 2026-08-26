@@ -167,6 +167,7 @@ pub fn peel_spawn(
         peel_depth,
         client_id: client_id.map(str::to_string),
         workspace_id: Some(workspace_id),
+        template_id: None,
     })?;
     Ok(PeelSpawn {
         spawned,

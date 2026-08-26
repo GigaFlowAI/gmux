@@ -1180,6 +1180,11 @@ fn spawn_params(req: &Request, conn: &Conn) -> Result<SpawnOpts, MuxError> {
             .unwrap_or(0) as u32,
         client_id: conn.client_id.clone(),
         workspace_id: None,
+        template_id: req
+            .params
+            .get("templateId")
+            .and_then(Value::as_str)
+            .map(str::to_string),
     })
 }
 

@@ -22,6 +22,7 @@ import { readJsonl, RingBuffer } from "../adapters/jsonl.js";
 import { cachedRecords } from "./index-store.js";
 import { rotateIfLarge, pruneLog, MAX_PANE_LOG_BYTES } from "./log-rotation.js";
 import type { MuxGateway } from "./mux-gateway.js";
+import { parseToolStarts, rememberCallId } from "./templates.js";
 import type { TmuxGateway } from "./tmux-gateway.js";
 
 /** Terminal capture: tmux `capture`/`pipe-pane`, or mux `readGrid`. */
@@ -203,6 +204,8 @@ export function isEnded(rows: Record<string, unknown>[]): boolean {
 export class AgentSensor implements Sensor {
   readonly kind = "agent" as const;
   private resolvedPath: string | null | undefined;
+  /** callIds already emitted as toolStarts — edge, not level. */
+  private seenCallIds = new Set<string>();
 
   constructor(
     private readonly identity: PaneIdentity,
@@ -235,7 +238,14 @@ export class AgentSensor implements Sensor {
   async observe(now: number): Promise<Observation> {
     const filePath = await this.resolvePath();
     if (!filePath) {
-      return { paneId: this.identity.paneId, kind: "agent", ts: now, tailLines: [], lastActivityTs: now };
+      return {
+        paneId: this.identity.paneId,
+        kind: "agent",
+        ts: now,
+        tailLines: [],
+        lastActivityTs: now,
+        toolStarts: [],
+      };
     }
 
     const tail = new RingBuffer<Record<string, unknown>>(AGENT_TAIL_CAPACITY);
@@ -243,12 +253,24 @@ export class AgentSensor implements Sensor {
       for await (const row of readJsonl(filePath)) tail.push(row);
     } catch {
       // File vanished or became unreadable mid-tick; degrade rather than throw.
-      return { paneId: this.identity.paneId, kind: "agent", ts: now, tailLines: [], lastActivityTs: now };
+      return {
+        paneId: this.identity.paneId,
+        kind: "agent",
+        ts: now,
+        tailLines: [],
+        lastActivityTs: now,
+        toolStarts: [],
+      };
     }
 
     const rows = tail.toArray();
     const tailLines = rows.map((r) => JSON.stringify(r));
     const lastActivityTs = tsOf(rows[rows.length - 1]) ?? now;
+    const toolStarts = parseToolStarts(rows, this.identity.paneId).filter((s) => {
+      if (this.seenCallIds.has(s.callId)) return false;
+      rememberCallId(this.seenCallIds, s.callId);
+      return true;
+    });
 
     return {
       paneId: this.identity.paneId,
@@ -259,6 +281,7 @@ export class AgentSensor implements Sensor {
       awaitingInput: isAssistantWaiting(rows),
       sawError: hasToolError(rows),
       ended: isEnded(rows),
+      toolStarts,
     };
   }
 

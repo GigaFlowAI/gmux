@@ -62,6 +62,8 @@ export interface PaneIdentity {
   workspaceId?: string;
   /** 0 user-spawned; +1 each peel. */
   peelDepth?: number;
+  /** Catalog id when this pane is a workspace template (tests/logs/review). */
+  templateId?: string | null;
 }
 
 /** One pane's complete state in the model. */

@@ -4,6 +4,20 @@ mod harness;
 use gmuxd::session::WORKING_WINDOW_MS;
 
 #[tokio::test]
+async fn spawn_records_template_id_on_the_pane() {
+    let h = harness::start().await;
+    let pane = h.spawn_template("/tmp", "tests", "tests").await;
+    let snap = h.snapshot();
+    let found = snap["panes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["paneId"] == pane.pane_id)
+        .unwrap();
+    assert_eq!(found["templateId"], "tests");
+}
+
+#[tokio::test]
 async fn snapshot_merges_intel_patches_by_pane_id() {
     let h = harness::start().await;
     let pane = h.spawn_shell("/tmp").await;

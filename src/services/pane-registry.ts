@@ -71,6 +71,7 @@ export class PaneRegistry {
         tabId: pane.tabId,
         workspaceId: pane.workspaceId,
         peelDepth: pane.peelDepth,
+        templateId: pane.templateId,
       };
     });
     return this.finish(present, liveIds);
