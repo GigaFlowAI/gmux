@@ -180,6 +180,31 @@ impl Mux {
         client.focused_pane_id = Some(pane_id.to_string());
     }
 
+    /// Click-to-focus: this client's `focusedPaneId`, then resize the pane to
+    /// the client's content-region winsize (last-writer-wins).
+    pub fn focus_client(&mut self, client_id: &str, pane_id: &str) -> Result<(), MuxError> {
+        if !self.panes.contains_key(pane_id) {
+            return Err(pane_missing(pane_id));
+        }
+        if !self.clients.contains_key(client_id) {
+            return Err(MuxError::rpc(
+                "not_found",
+                &format!("client {client_id} not found"),
+                "Call client.attach first",
+            ));
+        }
+        self.set_client_focus(client_id, pane_id);
+        let (cols, rows) = self
+            .clients
+            .get(client_id)
+            .map(|c| (c.cols, c.rows))
+            .unwrap_or((80, 24));
+        if let Some(pane) = self.panes.get_mut(pane_id) {
+            pane.resize(cols, rows)?;
+        }
+        Ok(())
+    }
+
     pub fn focused(&self, client_id: &str) -> Option<&str> {
         self.clients
             .get(client_id)
@@ -764,16 +789,12 @@ fn glyph_state(pane: &Pane, patch: Option<&IntelPatch>, intel_up: bool, now: u64
         }
         return pty_glyph(pane, now);
     }
-    last.map(str::to_string).unwrap_or_else(|| pty_glyph(pane, now))
+    last.map(str::to_string)
+        .unwrap_or_else(|| pty_glyph(pane, now))
 }
 
 fn pty_glyph(pane: &Pane, now: u64) -> String {
-    let last = pane
-        .grid
-        .lock()
-        .ok()
-        .map(|g| g.last_byte_ms)
-        .unwrap_or(0);
+    let last = pane.grid.lock().ok().map(|g| g.last_byte_ms).unwrap_or(0);
     if now.saturating_sub(last) < WORKING_WINDOW_MS {
         "working".into()
     } else {

@@ -71,7 +71,12 @@ impl IntelHub {
     /// Mux-originated RPC. Unused by peel (fast path). Timeouts: extract 20ms,
     /// pack 500ms, classify 30s, organize 120s.
     #[allow(dead_code)]
-    async fn call(&self, method: &str, params: Value, timeout: Duration) -> Result<Value, MuxError> {
+    async fn call(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value, MuxError> {
         let writer = self.writer.lock().await.clone();
         let Some(writer) = writer else {
             return Err(MuxError::rpc(
@@ -83,15 +88,18 @@ impl IntelHub {
         let id = format!("ex_{}", self.next_id.fetch_add(1, Ordering::Relaxed));
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.pending.lock().expect("pending").insert(id.clone(), tx);
-        write_json(&writer, json!({"id": id, "method": method, "params": params}))
-            .await
-            .map_err(|e| {
-                MuxError::rpc(
-                    "io",
-                    &format!("intel write failed: {e}"),
-                    "Restart the sidecar (`gmux daemon --sidecar`)",
-                )
-            })?;
+        write_json(
+            &writer,
+            json!({"id": id, "method": method, "params": params}),
+        )
+        .await
+        .map_err(|e| {
+            MuxError::rpc(
+                "io",
+                &format!("intel write failed: {e}"),
+                "Restart the sidecar (`gmux daemon --sidecar`)",
+            )
+        })?;
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(v)) => intel_reply_result(&v),
             Ok(Err(_)) => Err(MuxError::rpc(
@@ -252,7 +260,9 @@ pub(crate) fn spawn_sidecar_bin(gmux: &Path) {
 pub(crate) fn intel_reply_result(value: &Value) -> Result<Value, MuxError> {
     if let Some(err) = value.get("error") {
         return Err(MuxError::rpc(
-            err.get("code").and_then(Value::as_str).unwrap_or("intel_error"),
+            err.get("code")
+                .and_then(Value::as_str)
+                .unwrap_or("intel_error"),
             err.get("message")
                 .and_then(Value::as_str)
                 .unwrap_or("intel error"),
@@ -420,6 +430,25 @@ async fn dispatch(
         "hello" => handle_hello(mux, lock, hub, conn, req, writer).await,
         "ping" => ok(&req.id, json!({"ok": true})),
         "client.attach" => handle_attach(mux, conn, req).await,
+        "client.focus" => gated(conn, req, "client.focus", |conn| {
+            let Some(client_id) = conn.client_id.clone() else {
+                return error(
+                    &req.id,
+                    "invalid_request",
+                    "client.focus requires an attached TUI",
+                    "Call client.attach first",
+                );
+            };
+            let pane_id = req
+                .params
+                .get("paneId")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            match mux.lock().expect("mux").focus_client(&client_id, pane_id) {
+                Ok(()) => ok(&req.id, json!({"ok": true})),
+                Err(err) => err_of(&req.id, &err),
+            }
+        }),
         "session.snapshot" => gated(conn, req, "session.snapshot", |conn| {
             let guard = mux.lock().expect("mux");
             let mut snap = guard.snapshot();
@@ -605,7 +634,7 @@ async fn dispatch(
             &req.id,
             "unknown_method",
             &format!("unknown method {other}"),
-            "Supported: ping, session.snapshot, pane.list, pane.spawn, pane.send_keys, pane.close, pane.read, tab.close, peel, events.subscribe, hello, client.attach, pane.report_semantics",
+            "Supported: ping, session.snapshot, pane.list, pane.spawn, pane.send_keys, pane.close, pane.read, tab.close, peel, events.subscribe, hello, client.attach, client.focus, pane.report_semantics",
         ),
     }
 }

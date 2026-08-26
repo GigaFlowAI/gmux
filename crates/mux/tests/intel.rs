@@ -43,10 +43,7 @@ async fn mux_only_glyphs_when_intel_down() {
     let snap = h.snapshot();
     let panes = snap["panes"].as_array().unwrap();
     let state = |id: &str| {
-        panes
-            .iter()
-            .find(|p| p["paneId"] == id)
-            .unwrap()["state"]
+        panes.iter().find(|p| p["paneId"] == id).unwrap()["state"]
             .as_str()
             .unwrap()
             .to_string()

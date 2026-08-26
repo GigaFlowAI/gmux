@@ -1,5 +1,5 @@
 //! `gmuxd` — acquire the singleton lock and serve the NDJSON control socket.
-//! `gmuxd attach` is the TUI client (full-bleed until Task 6).
+//! `gmuxd attach` is the TUI client (40-col sidebar + one PTY).
 
 use std::path::PathBuf;
 

@@ -1,24 +1,32 @@
-//! Full-bleed attach TUI. Content region = the whole terminal (no sidebar yet).
-//! `ctrl+q` detaches without SIGHUP. SIGWINCH → Resize for this client.
+//! Attach TUI: 40-col sidebar + one PTY. Prompt lives in the sidebar as a dim
+//! `>` (not interactive until Task 8). `ctrl+q` detaches without SIGHUP.
 
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
+use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::sync::mpsc;
 
 use crate::frames::{self, Frame, Kind};
+use crate::keymap::{self, Action, Mode};
 use crate::paths::Paths;
+use crate::sidebar::{self, Hit, Model};
 
 #[derive(Debug, thiserror::Error)]
 pub enum TuiError {
@@ -57,30 +65,24 @@ pub async fn run(cwd: PathBuf) -> Result<(), TuiError> {
     }
 
     let paths = Paths::from_env();
-    let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+    let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((80, 24));
+    let (pty_cols, pty_rows) = sidebar::pty_winsize(term_cols, term_rows);
 
-    let mut control = connect_retry(&paths.socket_path()).await?;
+    let control = connect_retry(&paths.socket_path()).await?;
+    let (ctrl_read, mut ctrl_write) = control.into_split();
+    let mut lines = BufReader::new(ctrl_read).lines();
+
     let attach = json!({
         "id": "1",
         "method": "client.attach",
-        "params": { "cols": cols, "rows": rows, "cwd": cwd },
+        "params": { "cols": pty_cols, "rows": pty_rows, "cwd": cwd },
     });
-    control.write_all(format!("{attach}\n").as_bytes()).await?;
-    control.flush().await?;
+    ctrl_write
+        .write_all(format!("{attach}\n").as_bytes())
+        .await?;
+    ctrl_write.flush().await?;
 
-    let mut lines = BufReader::new(control).lines();
-    let Some(line) = lines.next_line().await? else {
-        return Err(TuiError::fail(
-            "mux closed during client.attach",
-            "Restart gmuxd (`cargo run -p gmuxd`) and retry `gmux attach`",
-        ));
-    };
-    let reply: Value = serde_json::from_str(&line).map_err(|e| {
-        TuiError::fail(
-            format!("invalid attach reply: {e}"),
-            "Upgrade gmuxd (`cargo build -p gmuxd`) and retry",
-        )
-    })?;
+    let reply = rpc_reply(&mut lines, "1").await?;
     if let Some(err) = reply.get("error") {
         return Err(TuiError::fail(
             err.get("message")
@@ -100,12 +102,47 @@ pub async fn run(cwd: PathBuf) -> Result<(), TuiError> {
                 "attach reply missing clientId",
                 "Upgrade gmuxd (`cargo build -p gmuxd`) and retry",
             )
-        })?;
+        })?
+        .to_string();
     let frames_path = result
         .get("framesSocket")
         .and_then(Value::as_str)
         .map(PathBuf::from)
-        .unwrap_or_else(|| paths.frames_socket_path(client_id));
+        .unwrap_or_else(|| paths.frames_socket_path(&client_id));
+    let mut focused = result
+        .get("focusedPaneId")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+
+    let snap = rpc(
+        &mut ctrl_write,
+        &mut lines,
+        "2",
+        "session.snapshot",
+        json!({}),
+    )
+    .await
+    .unwrap_or(Value::Null);
+    let ws = workspace_of(&snap, focused.as_deref());
+    let mut model = Model::from_snapshot(&snap, ws.as_deref());
+    model.focused_pane_id = focused.clone();
+    let _ = rpc(
+        &mut ctrl_write,
+        &mut lines,
+        "3",
+        "events.subscribe",
+        json!({}),
+    )
+    .await;
+
+    let (tx, mut ctrl_rx) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        while let Ok(Some(line)) = lines.next_line().await {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
 
     let frames = connect_retry(&frames_path).await?;
     let (reader, writer) = frames.into_split();
@@ -114,34 +151,100 @@ pub async fn run(cwd: PathBuf) -> Result<(), TuiError> {
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
     let _restore = Restore;
 
-    // Keep `lines` (control socket) alive so detach is disconnect, not pane kill.
-    let _control = lines;
+    let mut mode = Mode::Pty;
+    let mut last_frame: Option<Frame> = None;
+    let mut next_id: u64 = 4;
+    let mut last_snap = Instant::now();
+    let mut snap_in_flight = false;
+    let mut term_rows = term_rows;
+
+    paint(&mut terminal, last_frame.as_ref(), &model, mode, false)?;
 
     loop {
         while event::poll(Duration::from_millis(0))? {
             match event::read()? {
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
-                    if key_is_detach(&key) {
-                        return Ok(());
+                    let (next, action) = keymap::handle(mode, key_to_keymap(&key));
+                    mode = next;
+                    match action {
+                        Action::Detach => return Ok(()),
+                        Action::Peel => {
+                            send_rpc(
+                                &mut ctrl_write,
+                                &mut next_id,
+                                "peel",
+                                json!({ "clientId": client_id }),
+                            )
+                            .await?;
+                        }
+                        Action::Forward => {
+                            if let Some(bytes) = key_bytes(&key) {
+                                writer.write_all(&frames::encode_input(&bytes)).await?;
+                                writer.flush().await?;
+                            }
+                        }
+                        Action::None => {}
                     }
-                    if let Some(bytes) = key_bytes(&key) {
-                        writer.write_all(&frames::encode_input(&bytes)).await?;
-                        writer.flush().await?;
-                    }
+                    paint(&mut terminal, last_frame.as_ref(), &model, mode, false)?;
                 }
                 Event::Resize(c, r) => {
-                    writer.write_all(&frames::encode_resize(c, r)).await?;
+                    term_rows = r;
+                    let (pc, pr) = sidebar::pty_winsize(c, r);
+                    writer.write_all(&frames::encode_resize(pc, pr)).await?;
                     writer.flush().await?;
+                    paint(&mut terminal, last_frame.as_ref(), &model, mode, false)?;
+                }
+                Event::Mouse(mouse) => {
+                    handle_mouse(
+                        mouse,
+                        &mut mode,
+                        &mut model,
+                        term_rows,
+                        &mut ctrl_write,
+                        &mut next_id,
+                        &mut writer,
+                    )
+                    .await?;
+                    if let Some(id) = model.focused_pane_id.clone() {
+                        focused = Some(id);
+                    }
+                    paint(&mut terminal, last_frame.as_ref(), &model, mode, false)?;
                 }
                 _ => {}
             }
         }
 
         tokio::select! {
+            line = ctrl_rx.recv() => {
+                let Some(line) = line else { continue };
+                let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+                if v.get("event").is_some() {
+                    send_rpc(
+                        &mut ctrl_write,
+                        &mut next_id,
+                        "session.snapshot",
+                        json!({}),
+                    )
+                    .await?;
+                    snap_in_flight = true;
+                    continue;
+                }
+                if v.get("error").is_some() {
+                    snap_in_flight = false;
+                }
+                if let Some(result) = v.get("result") {
+                    if result.get("panes").is_some() || result.get("workspaces").is_some() {
+                        apply_snapshot(&mut model, result, focused.as_deref());
+                        snap_in_flight = false;
+                        last_snap = Instant::now();
+                        paint(&mut terminal, last_frame.as_ref(), &model, mode, false)?;
+                    }
+                }
+            }
             pkt = frames::read_packet(&mut reader) => {
                 let pkt = match pkt {
                     Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(()),
@@ -154,23 +257,194 @@ pub async fn run(cwd: PathBuf) -> Result<(), TuiError> {
                         "Upgrade gmuxd (`cargo build -p gmuxd`) and retry",
                     )
                 })?;
-                paint(&mut terminal, &frame)?;
+                let clear = frame.kind == Kind::Full;
                 writer.write_all(&frames::encode_ack(frame.seq)).await?;
                 writer.flush().await?;
+                last_frame = Some(frame);
+                paint(&mut terminal, last_frame.as_ref(), &model, mode, clear)?;
             }
-            _ = tokio::time::sleep(Duration::from_millis(16)) => {}
+            _ = tokio::time::sleep(Duration::from_millis(16)) => {
+                if !snap_in_flight && last_snap.elapsed() >= Duration::from_millis(500) {
+                    send_rpc(
+                        &mut ctrl_write,
+                        &mut next_id,
+                        "session.snapshot",
+                        json!({}),
+                    )
+                    .await?;
+                    snap_in_flight = true;
+                }
+            }
         }
     }
 }
 
-fn key_is_detach(key: &KeyEvent) -> bool {
-    is_detach_key(
-        key.modifiers.contains(KeyModifiers::CONTROL),
-        match key.code {
-            KeyCode::Char(c) => c,
-            _ => return false,
-        },
-    )
+async fn handle_mouse(
+    mouse: MouseEvent,
+    mode: &mut Mode,
+    model: &mut Model,
+    term_rows: u16,
+    ctrl_write: &mut OwnedWriteHalf,
+    next_id: &mut u64,
+    frames_write: &mut tokio::net::unix::OwnedWriteHalf,
+) -> Result<(), TuiError> {
+    if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+        if matches!(
+            mouse.kind,
+            MouseEventKind::Down(_) | MouseEventKind::Drag(_) | MouseEventKind::Moved
+        ) {
+            if let Hit::Content { x, y } = sidebar::hit_test(
+                mouse.column,
+                mouse.row,
+                term_rows,
+                model.pins.len(),
+                model.visible_panes(term_rows).len(),
+            ) {
+                // Stub: forward only once the pane has requested tracking.
+                let _ = (x, y, frames_write);
+            }
+        }
+        return Ok(());
+    }
+    let visible = model.visible_panes(term_rows).len();
+    match sidebar::hit_test(
+        mouse.column,
+        mouse.row,
+        term_rows,
+        model.pins.len(),
+        visible,
+    ) {
+        Hit::ChromeRow(i) => {
+            if let Some(pane) = model.visible_panes(term_rows).get(i) {
+                let pane_id = pane.pane_id.clone();
+                send_rpc(
+                    ctrl_write,
+                    next_id,
+                    "client.focus",
+                    json!({ "paneId": pane_id }),
+                )
+                .await?;
+                model.focused_pane_id = Some(pane_id);
+                *mode = Mode::Pty;
+            }
+        }
+        Hit::Chrome => *mode = Mode::Sidebar,
+        Hit::Prompt => *mode = Mode::Prompt,
+        Hit::Content { .. } => {
+            *mode = Mode::Pty;
+        }
+    }
+    Ok(())
+}
+
+fn apply_snapshot(model: &mut Model, snap: &Value, focused: Option<&str>) {
+    let ws = model
+        .workspace_id
+        .clone()
+        .or_else(|| workspace_of(snap, focused));
+    let focused_id = model.focused_pane_id.clone();
+    *model = Model::from_snapshot(snap, ws.as_deref());
+    model.focused_pane_id = focused_id.or_else(|| focused.map(str::to_string));
+}
+
+fn workspace_of(snap: &Value, focused: Option<&str>) -> Option<String> {
+    let panes = snap.get("panes")?.as_array()?;
+    if let Some(id) = focused {
+        if let Some(p) = panes
+            .iter()
+            .find(|p| p.get("paneId").and_then(Value::as_str) == Some(id))
+        {
+            return p
+                .get("workspaceId")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+        }
+    }
+    snap.get("workspaces")
+        .and_then(Value::as_array)
+        .and_then(|w| w.first())
+        .and_then(|w| w.get("id"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+async fn rpc(
+    writer: &mut OwnedWriteHalf,
+    lines: &mut tokio::io::Lines<BufReader<OwnedReadHalf>>,
+    id: &str,
+    method: &str,
+    params: Value,
+) -> Result<Value, TuiError> {
+    let req = json!({ "id": id, "method": method, "params": params });
+    writer.write_all(format!("{req}\n").as_bytes()).await?;
+    writer.flush().await?;
+    let v = rpc_reply(lines, id).await?;
+    if let Some(err) = v.get("error") {
+        return Err(TuiError::fail(
+            err.get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("rpc failed"),
+            err.get("fix")
+                .and_then(Value::as_str)
+                .unwrap_or("Check mux.sock and retry"),
+        ));
+    }
+    Ok(v.get("result").cloned().unwrap_or(Value::Null))
+}
+
+async fn rpc_reply(
+    lines: &mut tokio::io::Lines<BufReader<OwnedReadHalf>>,
+    id: &str,
+) -> Result<Value, TuiError> {
+    loop {
+        let Some(line) = lines.next_line().await? else {
+            return Err(TuiError::fail(
+                "mux closed during RPC",
+                "Restart gmuxd (`cargo run -p gmuxd`) and retry `gmux attach`",
+            ));
+        };
+        let v: Value = serde_json::from_str(&line).map_err(|e| {
+            TuiError::fail(
+                format!("invalid RPC reply: {e}"),
+                "Upgrade gmuxd (`cargo build -p gmuxd`) and retry",
+            )
+        })?;
+        let matches = match v.get("id") {
+            Some(Value::String(s)) => s == id,
+            Some(Value::Number(n)) => n.to_string() == id,
+            _ => false,
+        };
+        if matches {
+            return Ok(v);
+        }
+    }
+}
+
+async fn send_rpc(
+    writer: &mut OwnedWriteHalf,
+    next_id: &mut u64,
+    method: &str,
+    params: Value,
+) -> Result<(), TuiError> {
+    let id = next_id.to_string();
+    *next_id += 1;
+    let req = json!({ "id": id, "method": method, "params": params });
+    writer.write_all(format!("{req}\n").as_bytes()).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+fn key_to_keymap(key: &KeyEvent) -> keymap::Key {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Char(c) if ctrl => keymap::Key::Ctrl(c),
+        KeyCode::Char(c) => keymap::Key::Char(c),
+        KeyCode::Esc => keymap::Key::Esc,
+        KeyCode::Enter => keymap::Key::Enter,
+        KeyCode::Up => keymap::Key::Up,
+        KeyCode::Down => keymap::Key::Down,
+        _ => keymap::Key::Other,
+    }
 }
 
 fn key_bytes(key: &KeyEvent) -> Option<Vec<u8>> {
@@ -208,43 +482,129 @@ fn key_bytes(key: &KeyEvent) -> Option<Vec<u8>> {
     }
 }
 
-fn paint(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, frame: &Frame) -> io::Result<()> {
+fn paint(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    frame: Option<&Frame>,
+    model: &Model,
+    mode: Mode,
+    clear_pty: bool,
+) -> io::Result<()> {
     terminal.draw(|f| {
         let area = f.area();
         let buf = f.buffer_mut();
-        if frame.kind == Kind::Full {
-            for y in 0..area.height {
-                for x in 0..area.width {
-                    buf[(x, y)].reset();
-                    buf[(x, y)].set_symbol(" ");
+        let side_w = sidebar::WIDTH.min(area.width);
+        let pty_x = side_w;
+        let pty_w = area.width.saturating_sub(side_w);
+        let pty_area = Rect {
+            x: pty_x,
+            y: 0,
+            width: pty_w,
+            height: area.height,
+        };
+        let side_area = Rect {
+            x: 0,
+            y: 0,
+            width: side_w,
+            height: area.height,
+        };
+
+        if clear_pty {
+            for y in 0..pty_area.height {
+                for x in 0..pty_area.width {
+                    let dest = &mut buf[(pty_area.x + x, pty_area.y + y)];
+                    dest.reset();
+                    dest.set_symbol(" ");
                 }
             }
         }
-        for rect in &frame.rects {
-            for (i, cell) in rect.cells.iter().enumerate() {
-                let w = rect.w.max(1);
-                let x = rect.x.saturating_add((i as u16) % w);
-                let y = rect.y.saturating_add((i as u16) / w);
-                if x >= area.width || y >= area.height {
-                    continue;
-                }
-                let dest = &mut buf[(x, y)];
-                let symbol = if cell.grapheme.is_empty() {
-                    " "
-                } else {
-                    cell.grapheme.as_str()
-                };
-                dest.set_symbol(symbol);
-                dest.set_style(
-                    Style::default()
-                        .fg(argb(cell.fg))
-                        .bg(argb(cell.bg))
-                        .add_modifier(attrs(cell.attrs)),
-                );
-            }
+        if let Some(frame) = frame {
+            paint_pty(buf, pty_area, frame);
         }
+        paint_sidebar(buf, side_area, model, mode);
     })?;
     Ok(())
+}
+
+fn paint_pty(buf: &mut ratatui::buffer::Buffer, area: Rect, frame: &Frame) {
+    for rect in &frame.rects {
+        for (i, cell) in rect.cells.iter().enumerate() {
+            let w = rect.w.max(1);
+            let x = area.x.saturating_add(rect.x.saturating_add((i as u16) % w));
+            let y = area.y.saturating_add(rect.y.saturating_add((i as u16) / w));
+            if x >= area.x + area.width || y >= area.y + area.height {
+                continue;
+            }
+            let dest = &mut buf[(x, y)];
+            let symbol = if cell.grapheme.is_empty() {
+                " "
+            } else {
+                cell.grapheme.as_str()
+            };
+            dest.set_symbol(symbol);
+            dest.set_style(
+                Style::default()
+                    .fg(argb(cell.fg))
+                    .bg(argb(cell.bg))
+                    .add_modifier(attrs(cell.attrs)),
+            );
+        }
+    }
+}
+
+fn paint_sidebar(buf: &mut ratatui::buffer::Buffer, area: Rect, model: &Model, mode: Mode) {
+    for y in 0..area.height {
+        for x in 0..area.width {
+            let dest = &mut buf[(area.x + x, area.y + y)];
+            dest.reset();
+            dest.set_symbol(" ");
+        }
+    }
+    let lines = sidebar::render_lines(model, area.height);
+    let focused = model.focused_pane_id.as_deref();
+    let chrome = matches!(mode, Mode::Sidebar | Mode::Prompt | Mode::Drawer);
+    for (i, line) in lines.iter().enumerate() {
+        let y = i as u16;
+        if y >= area.height {
+            break;
+        }
+        let is_footer = y + 1 == area.height;
+        let is_pin = (i as usize) < model.pins.len() && !is_footer;
+        let pane_idx = i.saturating_sub(model.pins.len());
+        let is_focused_row = !is_footer
+            && !is_pin
+            && model
+                .panes
+                .get(pane_idx)
+                .is_some_and(|p| Some(p.pane_id.as_str()) == focused);
+        let mut style = Style::default().fg(Color::Gray);
+        if is_footer {
+            style = Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM);
+        } else if is_pin {
+            style = Style::default().fg(Color::Yellow);
+        } else if is_focused_row {
+            style = Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::REVERSED);
+        } else if chrome {
+            style = Style::default().fg(Color::White);
+        }
+        put_line(buf, area, y, line, style);
+    }
+}
+
+fn put_line(buf: &mut ratatui::buffer::Buffer, area: Rect, y: u16, text: &str, style: Style) {
+    for (i, ch) in text.chars().enumerate() {
+        let x = i as u16;
+        if x >= area.width {
+            break;
+        }
+        let dest = &mut buf[(area.x + x, area.y + y)];
+        let mut tmp = [0u8; 4];
+        dest.set_symbol(ch.encode_utf8(&mut tmp));
+        dest.set_style(style);
+    }
 }
 
 fn argb(c: u32) -> Color {
@@ -308,7 +668,7 @@ impl Drop for Restore {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
         let mut stdout = io::stdout();
-        let _ = execute!(stdout, LeaveAlternateScreen);
+        let _ = execute!(stdout, DisableMouseCapture, LeaveAlternateScreen);
         let _ = stdout.flush();
     }
 }

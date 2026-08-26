@@ -70,6 +70,21 @@ async fn resize_this_client_resizes_focused_grid() {
     assert_eq!(h.grid_size(&pane), (40, 12));
 }
 
+#[tokio::test]
+async fn focus_client_moves_this_client_and_resizes_pane() {
+    let h = harness::start().await;
+    let c = h.attach();
+    h.resize(&c.id, 40, 12);
+    let extra = h.spawn_shell("/tmp").await;
+    h.mux()
+        .lock()
+        .unwrap()
+        .focus_client(&c.id, &extra.pane_id)
+        .unwrap();
+    assert_eq!(h.focused(&c.id), extra.pane_id);
+    assert_eq!(h.grid_size(&extra.pane_id), (40, 12));
+}
+
 #[test]
 fn workspace_id_is_ws_plus_12_hex_sha256() {
     let dir = tempfile::tempdir().unwrap();
