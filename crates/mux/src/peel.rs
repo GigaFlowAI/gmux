@@ -13,6 +13,10 @@ use crate::session::{Mux, MuxError, SpawnOpts, Spawned, TabSpec};
 
 const SECONDARY_CLEAR: &str = "\x01\x0b";
 const HARNESS_READY: Duration = Duration::from_secs(8);
+/// Wait for the parent PTY to redraw after clearKeys. Immediate re-read is
+/// always stale — Claude paints the composer asynchronously.
+const CLEAR_POLL: Duration = Duration::from_millis(80);
+const CLEAR_TICK: Duration = Duration::from_millis(5);
 
 #[derive(Debug, Clone)]
 pub struct PeelSpawn {
@@ -211,6 +215,9 @@ where
     };
 
     if seed.is_empty() {
+        if intel_down {
+            mux.lock().expect("mux").toast("intel down");
+        }
         return PeelSlowResult {
             submitted: false,
             extractor,
@@ -226,22 +233,22 @@ where
         let mut guard = mux.lock().expect("mux");
         let _ = guard.send_keys(&parent_id, &clear);
     }
-    if seed_visible(&mux, &parent_id, &seed) {
+    if !wait_seed_gone(&mux, &parent_id, &seed).await {
         {
             let mut guard = mux.lock().expect("mux");
             let _ = guard.send_keys(&parent_id, SECONDARY_CLEAR);
         }
-    }
-    if seed_visible(&mux, &parent_id, &seed) {
-        let mut guard = mux.lock().expect("mux");
-        guard.toast("couldn't clear parent prompt");
-        if intel_down {
-            guard.emit("toast", serde_json::json!({ "message": "intel down" }));
+        if !wait_seed_gone(&mux, &parent_id, &seed).await {
+            let mut guard = mux.lock().expect("mux");
+            guard.toast("couldn't clear parent prompt");
+            if intel_down {
+                guard.toast("intel down");
+            }
+            return PeelSlowResult {
+                submitted: false,
+                extractor,
+            };
         }
-        return PeelSlowResult {
-            submitted: false,
-            extractor,
-        };
     }
 
     wait_harness_ready(&mux, &child_id).await;
@@ -275,20 +282,65 @@ fn seed_visible(mux: &Arc<Mutex<Mux>>, pane_id: &str, seed: &str) -> bool {
     }
 }
 
+async fn wait_seed_gone(mux: &Arc<Mutex<Mux>>, pane_id: &str, seed: &str) -> bool {
+    let deadline = Instant::now() + CLEAR_POLL;
+    loop {
+        if !seed_visible(mux, pane_id, seed) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(CLEAR_TICK).await;
+    }
+}
+
+/// True when `seed` is still a visible prompt, surviving box `│` wrapping and
+/// stripped `>` prefixes — the same chrome extract drops when it builds the seed.
 pub fn grid_contains_seed(grid: &GridSnapshot, seed: &str) -> bool {
     if seed.is_empty() {
         return false;
     }
-    let joined: String = grid.lines.iter().map(|l| l.text.as_str()).collect();
-    if joined.contains(seed) {
+    let stripped: Vec<String> = grid
+        .lines
+        .iter()
+        .map(|l| strip_prompt_chrome(&l.text))
+        .collect();
+    let extracted_like = stripped.join("\n");
+    if extracted_like.contains(seed) {
         return true;
     }
-    grid.lines
-        .iter()
-        .map(|l| l.text.as_str())
-        .collect::<Vec<_>>()
-        .join("\n")
-        .contains(seed)
+    let wrapped: String = stripped.iter().map(|s| s.trim_end()).collect();
+    if wrapped.contains(seed) {
+        return true;
+    }
+    let hay: String = wrapped.chars().filter(|c| !c.is_whitespace()).collect();
+    let needle: String = seed.chars().filter(|c| !c.is_whitespace()).collect();
+    !needle.is_empty() && hay.contains(&needle)
+}
+
+fn strip_prompt_chrome(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut start = 0;
+    let mut end = chars.len();
+    if end > start && matches!(chars[start], '│' | '┃' | '|') {
+        start += 1;
+    }
+    if end > start && matches!(chars[end - 1], '│' | '┃' | '|') {
+        end -= 1;
+    }
+    let slice = &chars[start..end];
+    let mut i = 0;
+    while i < slice.len() && slice[i] == ' ' {
+        i += 1;
+    }
+    if i < slice.len() && matches!(slice[i], '>' | '›') {
+        i += 1;
+        if i < slice.len() && slice[i] == ' ' {
+            i += 1;
+        }
+    }
+    slice[i..].iter().collect()
 }
 
 async fn wait_harness_ready(mux: &Arc<Mutex<Mux>>, child_id: &str) {
@@ -330,11 +382,92 @@ fn needs_composer(argv: &[String]) -> bool {
     cmd == "claude" || cmd == "codex"
 }
 
-fn composer_visible(grid: &GridSnapshot) -> bool {
-    grid.lines.iter().any(|l| {
-        l.text.contains('╭')
-            || l.text.contains('┌')
-            || l.text.contains('▍')
-            || l.text.contains('>')
-    })
+pub(crate) fn composer_visible(grid: &GridSnapshot) -> bool {
+    has_box_pair(grid) || has_caret_line(grid)
+}
+
+fn has_box_pair(grid: &GridSnapshot) -> bool {
+    let top = grid.lines.iter().any(|l| {
+        (l.text.contains('╭') && l.text.contains('╮'))
+            || (l.text.contains('┌') && l.text.contains('┐'))
+    });
+    let bot = grid.lines.iter().any(|l| {
+        (l.text.contains('╰') && l.text.contains('╯'))
+            || (l.text.contains('└') && l.text.contains('┘'))
+    });
+    top && bot
+}
+
+fn has_caret_line(grid: &GridSnapshot) -> bool {
+    grid.lines.iter().any(|l| is_caret_line(&l.text))
+}
+
+/// Caret / prompt line, not a `>` inside a diff or comparison.
+fn is_caret_line(text: &str) -> bool {
+    if text.contains('▍') {
+        return true;
+    }
+    let mut t = text.trim_start();
+    t = t.trim_start_matches(['│', '┃', '|']);
+    t = t.trim_start();
+    t.starts_with('>') || t.starts_with('›')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::grid::GridLine;
+
+    fn snap(lines: &[&str]) -> GridSnapshot {
+        GridSnapshot {
+            pane_id: "p_x".into(),
+            cols: 40,
+            rows: lines.len() as u16,
+            lines: lines
+                .iter()
+                .map(|t| GridLine {
+                    text: (*t).into(),
+                    intensity: vec![],
+                })
+                .collect(),
+            alternate_screen: true,
+            foreground_command: "claude".into(),
+        }
+    }
+
+    #[test]
+    fn seed_visible_through_box_prefix() {
+        let g = snap(&["│ > also fix the webhook                       │"]);
+        assert!(grid_contains_seed(&g, "also fix the webhook"));
+    }
+
+    #[test]
+    fn seed_visible_through_wrapped_box() {
+        let g = snap(&["│ > also fix the we│", "│ bhook            │"]);
+        assert!(grid_contains_seed(&g, "also fix the webhook"));
+        let joined: String = g.lines.iter().map(|l| l.text.as_str()).collect();
+        assert!(
+            !joined.contains("also fix the webhook"),
+            "raw dump must not already contain the seed"
+        );
+    }
+
+    #[test]
+    fn composer_rejects_gt_in_a_diff() {
+        let g = snap(&["+    if (a > b) {", "@@ -1,3 +1,4 @@"]);
+        assert!(!composer_visible(&g));
+    }
+
+    #[test]
+    fn composer_accepts_box_pair_and_caret() {
+        let boxed = snap(&[
+            "╭──────────────────╮",
+            "│ > also fix       │",
+            "╰──────────────────╯",
+        ]);
+        assert!(composer_visible(&boxed));
+        assert!(composer_visible(&snap(&["> also fix the webhook"])));
+        assert!(composer_visible(&snap(&["also fix▍"])));
+        assert!(!composer_visible(&snap(&["╭──────────────────╮"])));
+    }
 }

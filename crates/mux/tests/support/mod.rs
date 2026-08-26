@@ -218,6 +218,14 @@ impl Harness {
             .feed(bytes);
     }
 
+    pub fn reset_grid(&self, pane_id: &str) {
+        let mux = self.mux.lock().unwrap();
+        let pane = mux.panes.get(pane_id).expect("pane");
+        let mut grid = pane.grid.lock().expect("grid");
+        let (cols, rows) = grid.size();
+        *grid = gmuxd::grid::Grid::new(cols, rows);
+    }
+
     pub fn read_pane(
         &self,
         pane_id: &str,

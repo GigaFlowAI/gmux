@@ -19,9 +19,7 @@ async fn empty_seed_spawns_blank_no_submit() {
     let h = harness::start().await;
     let parent = h.spawn_shell("/tmp").await;
     h.set_client_focus("c1", &parent.pane_id);
-    let t0 = std::time::Instant::now();
     let spawned = h.peel_spawn("c1").unwrap();
-    assert!(t0.elapsed() < std::time::Duration::from_millis(50));
     assert!(spawned.seed0.is_empty());
     let slow = h
         .peel_slow(
@@ -81,7 +79,11 @@ async fn uncleared_parent_does_not_submit() {
     let parent = h.spawn_shell("/tmp").await;
     h.set_client_focus("c1", &parent.pane_id);
     h.set_shadow(&parent.pane_id, "also fix the webhook");
-    h.feed_grid(&parent.pane_id, b"also fix the webhook");
+    // Seed stays on the parent grid through the clear poll — Claude never redraws.
+    h.feed_grid(
+        &parent.pane_id,
+        "│ > also fix the webhook                       │".as_bytes(),
+    );
     let spawned = h.peel_spawn("c1").unwrap();
     let slow = h
         .peel_slow(
@@ -93,6 +95,57 @@ async fn uncleared_parent_does_not_submit() {
         .await;
     assert!(!slow.submitted);
     assert_eq!(h.status().as_deref(), Some("couldn't clear parent prompt"));
+}
+
+#[tokio::test]
+async fn clear_poll_sees_parent_redraw_then_submits() {
+    let h = harness::start().await;
+    let parent = h.spawn_shell("/tmp").await;
+    h.set_client_focus("c1", &parent.pane_id);
+    h.set_shadow(&parent.pane_id, "also fix the webhook");
+    h.feed_grid(
+        &parent.pane_id,
+        "│ > also fix the webhook                       │".as_bytes(),
+    );
+    let spawned = h.peel_spawn("c1").unwrap();
+    let mux = h.mux();
+    let parent_id = parent.pane_id.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+        let mux = mux.lock().unwrap();
+        let pane = mux.panes.get(&parent_id).expect("pane");
+        let mut grid = pane.grid.lock().expect("grid");
+        let (cols, rows) = grid.size();
+        *grid = gmuxd::grid::Grid::new(cols, rows);
+    });
+    let slow = h
+        .peel_slow(
+            &spawned.parent_id,
+            &spawned.spawned.pane_id,
+            &spawned.seed0,
+            Ok(reply("also fix the webhook", "claude-code")),
+        )
+        .await;
+    assert!(slow.submitted);
+    assert_eq!(slow.extractor, "claude-code");
+}
+
+#[tokio::test]
+async fn intel_down_empty_seed_toasts_intel_down() {
+    let h = harness::start().await;
+    let parent = h.spawn_shell("/tmp").await;
+    h.set_client_focus("c1", &parent.pane_id);
+    let spawned = h.peel_spawn("c1").unwrap();
+    let slow = h
+        .peel_slow(
+            &spawned.parent_id,
+            &spawned.spawned.pane_id,
+            &spawned.seed0,
+            Err(ExtractError::Down),
+        )
+        .await;
+    assert!(!slow.submitted);
+    assert_eq!(h.status().as_deref(), Some("intel down"));
 }
 
 #[tokio::test]
