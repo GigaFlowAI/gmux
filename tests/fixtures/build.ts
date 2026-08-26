@@ -149,3 +149,42 @@ export function codexLines(sessionId: string): unknown[] {
     // No task_complete: this session was cut off.
   ];
 }
+
+/** Claude Code assistant row with a Bash `tool_use` start (Task 12). */
+export function claudeBashToolUse(options: {
+  id: string;
+  command: string;
+  timestamp?: string;
+}): Record<string, unknown> {
+  return {
+    type: "assistant",
+    timestamp: options.timestamp ?? "2026-08-25T12:00:00.000Z",
+    message: {
+      role: "assistant",
+      content: [
+        { type: "tool_use", id: options.id, name: "Bash", input: { command: options.command } },
+      ],
+    },
+  };
+}
+
+/** Codex `function_call` with `name: "shell"` and `arguments.cmd` (Task 12). */
+export function codexShellFunctionCall(options: {
+  cmd: string;
+  callId?: string;
+  id?: string;
+  timestamp?: string;
+}): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    type: "function_call",
+    name: "shell",
+    arguments: JSON.stringify({ cmd: options.cmd }),
+  };
+  if (options.callId !== undefined) payload.call_id = options.callId;
+  if (options.id !== undefined) payload.id = options.id;
+  return {
+    type: "response_item",
+    timestamp: options.timestamp ?? "2026-08-25T12:00:00.000Z",
+    payload,
+  };
+}

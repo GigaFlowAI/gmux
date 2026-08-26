@@ -1,9 +1,10 @@
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 
 import type { Command } from "commander";
 
 import { SCHEMA_VERSION } from "../../core/types.js";
-import { cacheDir, configPath } from "../../core/paths.js";
+import { cacheDir, configPath, muxSocketPath } from "../../core/paths.js";
 import { allAdapters } from "../../adapters/registry.js";
 import {
   AUTO_SUMMARIZE_LIMIT,
@@ -14,17 +15,92 @@ import { configExists, isChildProcess, readConfig } from "../../services/config.
 import { onPath } from "../../services/providers.js";
 import { defaultSummaryProvider } from "../../services/summarize.js";
 import { discover } from "../../services/index-store.js";
-import { supportsDisplayPopup, tmuxVersion } from "../../services/tmux.js";
+import { tmuxVersion } from "../../services/tmux.js";
 import { inspectTmuxBindings, realTmuxFs } from "./tmux.js";
 import { dim, green, jsonEnvelope, red, yellow } from "../format.js";
+import { findGmuxd, muxPidAlive, readMuxLock, type MuxLockFile } from "./spawn.js";
 
-interface Check {
+export interface DoctorCheck {
   name: string;
   ok: boolean;
   /** Not fatal — the tool still works, just less well. */
   optional?: boolean;
   detail: string;
   fix?: string;
+}
+
+type Check = DoctorCheck;
+
+/** Mux runtime: binary on disk, mux.sock, intel pid from the lock. */
+export function muxDoctorChecks(input: {
+  binaryPath: string | null;
+  socketPath: string;
+  socketUp: boolean;
+  lock: MuxLockFile | null;
+  pidAlive: (pid: number) => boolean;
+}): DoctorCheck[] {
+  const muxPid = input.lock?.muxPid ?? null;
+  const muxAlive = muxPid != null && input.pidAlive(muxPid);
+  const intelPid = input.lock?.intelPid ?? null;
+  const intelAlive = intelPid != null && input.pidAlive(intelPid);
+
+  return [
+    {
+      name: "gmuxd (mux binary)",
+      ok: input.binaryPath != null,
+      optional: true,
+      detail: input.binaryPath ? input.binaryPath : "not built — `gmux attach` needs target/debug/gmuxd",
+      ...(input.binaryPath ? {} : { fix: "Run `cargo build -p gmuxd` from the repo root." }),
+    },
+    {
+      name: "mux.sock",
+      ok: input.socketUp && muxAlive,
+      optional: true,
+      detail: input.socketUp
+        ? muxAlive
+          ? `${input.socketPath} (pid ${muxPid})`
+          : `${input.socketPath} exists but mux pid is not alive`
+        : `${input.socketPath} is down`,
+      ...(input.socketUp && muxAlive
+        ? {}
+        : { fix: "Run `gmux attach` or `gmux spawn` to start gmuxd." }),
+    },
+    {
+      name: "intel sidecar",
+      ok: intelAlive,
+      optional: true,
+      detail: intelAlive ? `up (pid ${intelPid})` : "down — peel still works; classify/pack will time out",
+      ...(intelAlive ? {} : { fix: "Start `gmux daemon --sidecar` (attach starts it)." }),
+    },
+    {
+      name: "ctrl+t in host emulator",
+      ok: true,
+      optional: true,
+      detail:
+        "gmux runs inside Ghostty/iTerm/kitty — if ctrl+t opens a native tab, unbind it there. The mux binding stays ctrl+t (ctrl+shift+t is an alias).",
+    },
+  ];
+}
+
+const TMUX_MIGRATE_FIX = "Finish work in tmux, then `gmux tmux uninstall` and `gmux attach`.";
+
+/** Leftover tmux is informational. cockpit/overlay always throw — never "overlay available". */
+export function leftoverTmuxCheck(tmuxV: { raw: string } | null): DoctorCheck {
+  if (!tmuxV) {
+    return {
+      name: "tmux (leftover)",
+      ok: true,
+      optional: true,
+      detail: "not found — using gmux attach",
+    };
+  }
+  return {
+    name: "tmux (leftover)",
+    ok: true,
+    optional: true,
+    detail: `${tmuxV.raw} — leftover. Finish work in tmux, then gmux tmux uninstall and gmux attach`,
+    fix: TMUX_MIGRATE_FIX,
+  };
 }
 
 /**
@@ -68,34 +144,22 @@ export function registerDoctor(program: Command): void {
         ...(fzf ? {} : { fix: "brew install fzf" }),
       });
 
-      const tmuxV = await tmuxVersion();
-      const tmuxOk = supportsDisplayPopup(tmuxV);
-      checks.push({
-        name: "tmux (peek overlay)",
-        ok: tmuxOk,
-        optional: true,
-        detail: tmuxV
-          ? tmuxOk
-            ? `${tmuxV.raw} — \`ctrl+g\` overlay available`
-            : `${tmuxV.raw} — too old; the overlay needs tmux >= 3.2`
-          : "not found — the tmux overlay (`gmux tmux install`) is unavailable",
-        ...(tmuxOk
-          ? {}
-          : { fix: tmuxV ? "Upgrade tmux to 3.2 or newer." : "brew install tmux, then `gmux tmux install`." }),
-      });
+      checks.push(leftoverTmuxCheck(await tmuxVersion()));
 
       const bindings = inspectTmuxBindings(homedir(), realTmuxFs());
-      const bindingsOk = bindings.installed && !bindings.leftoverLegacy;
+      const bindingsMigrated = !bindings.installed && !bindings.leftoverLegacy;
       checks.push({
         name: "tmux bindings",
-        ok: bindingsOk,
+        ok: bindingsMigrated,
         optional: true,
-        detail: !bindings.installed
-          ? "not installed — ctrl-g will not open the cockpit"
-          : bindings.leftoverLegacy
-            ? `installed in ${bindings.targetPath} but shadowed by leftover gigamanage bindings`
-            : `installed in ${bindings.targetPath}`,
-        ...(bindingsOk ? {} : { fix: "gmux tmux install  (or re-run `gmux setup`)" }),
+        detail: bindings.leftoverLegacy
+          ? `installed in ${bindings.targetPath} but shadowed by leftover gigamanage bindings`
+          : bindings.installed
+            ? `installed in ${bindings.targetPath} — finish in tmux, then gmux tmux uninstall`
+            : "not installed — using gmux attach",
+        ...(bindingsMigrated
+          ? {}
+          : { fix: "Finish work in tmux, then `gmux tmux uninstall` and `gmux attach`." }),
       });
       if (bindings.leftoverLegacy) {
         checks.push({
@@ -103,9 +167,20 @@ export function registerDoctor(program: Command): void {
           ok: false,
           optional: true,
           detail: "old # >>> gigamanage >>> block still present — ctrl-g may open `gm overlay`",
-          fix: "gmux tmux install  (migrates the old block) or delete the # >>> gigamanage >>> block from ~/.tmux.conf / ~/.tmux.conf.local",
+          fix: "`gmux tmux uninstall` strips it, or delete the # >>> gigamanage >>> block from ~/.tmux.conf / ~/.tmux.conf.local",
         });
       }
+
+      const lock = await readMuxLock();
+      checks.push(
+        ...muxDoctorChecks({
+          binaryPath: findGmuxd(),
+          socketPath: muxSocketPath(),
+          socketUp: existsSync(muxSocketPath()),
+          lock,
+          pidAlive: muxPidAlive,
+        }),
+      );
 
       // Config first: it explains every provider answer below it.
       const config = await readConfig();

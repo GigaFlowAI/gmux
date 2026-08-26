@@ -1,0 +1,57 @@
+{
+  "paneId": "p_shell_ps1",
+  "cols": 40,
+  "rows": 2,
+  "alternateScreen": false,
+  "foregroundCommand": "zsh",
+  "lines": [
+    {
+      "text": "last command output",
+      "intensity": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "text": "user@host % echo hi",
+      "intensity": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  ]
+}

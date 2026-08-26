@@ -1,0 +1,62 @@
+{
+  "paneId": "p_codex_caret",
+  "cols": 40,
+  "rows": 3,
+  "alternateScreen": true,
+  "foregroundCommand": "codex",
+  "lines": [
+    {
+      "text": "codex is thinking",
+      "intensity": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "text": "",
+      "intensity": []
+    },
+    {
+      "text": "> also fix the webhook",
+      "intensity": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  ]
+}

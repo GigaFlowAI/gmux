@@ -21,7 +21,7 @@ import { runProviderCommand } from "./provider-process.js";
 export type AskIntent = "organize" | "ask";
 
 /** Kept tight: this is a single-word classification, not a summary or an answer. */
-const CLASSIFY_TIMEOUT_MS = 30_000;
+export const CLASSIFY_TIMEOUT_MS = 30_000;
 
 export interface ClassifyDeps {
   /**
@@ -38,7 +38,7 @@ export interface ClassifyDeps {
 export function buildClassifyPrompt(prompt: string): string {
   return [
     "Classify the user's message. Reply with exactly one word and nothing else:",
-    "ORGANIZE if it asks to rearrange/reorganize the tmux workspace layout (windows, panes, tiling, grouping, moving panes),",
+    "ORGANIZE if it asks to rearrange/reorganize the gmux workspace (tabs, panes, grouping, moving panes),",
     "or ASK if it is a question or instruction for the running agents.",
     "",
     `Message: ${prompt}`,

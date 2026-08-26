@@ -47,6 +47,9 @@ export interface TmuxPane {
  * An exact pane→session link recorded by `gmux run`. Ephemeral runtime state: a
  * `paneId` means nothing once the tmux server dies, so this lives in the cache
  * and is pruned to the live pane set on every read of the overlay.
+ *
+ * In the live mux lane, pane ids become `p_<ulid>` (Crockford); the shape of
+ * this type is unchanged.
  */
 export interface PaneLink {
   paneId: string;
@@ -231,6 +234,11 @@ export interface GmConfig {
    * `gmux setup` offers it, and it is how you decline the token spend outright.
    */
   provider: ProviderChoice | null;
+  /**
+   * Interactive harness for new panes / peels. Optional; absent means undefined,
+   * never "use provider". Present-but-malformed makes the whole file untrusted.
+   */
+  agentHarness?: ProviderChoice;
   /** Keep the recent window summarized in the background. */
   autoSummarize: boolean;
   /** gmux daemon + guardian settings. Absent on configs written before gmux. */

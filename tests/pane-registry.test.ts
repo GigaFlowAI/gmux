@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeTmuxGateway } from "./fixtures/fake-gateway.js";
+import { FakeMuxGateway } from "../src/services/mux-gateway.js";
 import { PaneRegistry } from "../src/services/pane-registry.js";
 import type { TmuxPane } from "../src/core/types.js";
 
@@ -28,5 +29,15 @@ describe("PaneRegistry.diff", () => {
     const d = await reg.diff();
     expect(d.appeared).toEqual([]);
     expect(d.vanished).toEqual(["%2"]);
+  });
+  it("diffs GmuxPane ids from MuxGateway", async () => {
+    const gw = new FakeMuxGateway();
+    const spawned = await gw.spawn({ cwd: "/x", argv: ["zsh"] });
+    const reg = new PaneRegistry(gw);
+    const d = await reg.diff();
+    expect(d.appeared).toEqual([spawned.paneId]);
+    expect(d.present).toHaveLength(1);
+    expect(d.present[0]!.paneId.startsWith("p_")).toBe(true);
+    expect(d.present[0]!.tabId).toBe(spawned.tabId);
   });
 });

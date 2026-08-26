@@ -1,0 +1,122 @@
+use gmuxd::peer::{CallerClass, ClassifyError, PidTree, classify, intel_hello, may_attach};
+
+fn pane(id: &str, pids: &[u32]) -> PidTree {
+    PidTree {
+        pane_id: id.to_string(),
+        pids: pids.to_vec(),
+    }
+}
+
+#[test]
+fn classify_table() {
+    let tree = pane("p_parent", &[100, 101, 102]);
+
+    assert_eq!(
+        classify(9, &[tree.clone()], true, None, Some(9)).unwrap(),
+        CallerClass::Intel
+    );
+
+    assert!(matches!(
+        classify(9, &[tree.clone()], false, None, Some(9)),
+        Err(ClassifyError::PermissionDenied { .. })
+    ));
+
+    assert!(matches!(
+        classify(50, &[tree.clone()], true, None, Some(9)),
+        Err(ClassifyError::PermissionDenied { .. })
+    ));
+
+    assert_eq!(
+        classify(101, &[tree.clone()], false, Some("p_parent"), None).unwrap(),
+        CallerClass::Pane
+    );
+
+    let missing = classify(101, &[tree.clone()], false, None, None);
+    assert!(
+        matches!(missing, Err(ClassifyError::PermissionDenied { .. })),
+        "missing GMUX_PANE_ID must not promote to cli: {missing:?}"
+    );
+
+    // Named Task 13 case: unsetting GMUX_PANE_ID is denied, never cli.
+    let unset = classify(42, &[pane("p_x", &[42])], false, None, None);
+    assert!(
+        matches!(unset, Err(ClassifyError::PermissionDenied { .. })),
+        "unsetting GMUX_PANE_ID must not promote to cli: {unset:?}"
+    );
+
+    let mismatch = classify(101, &[tree.clone()], false, Some("p_other"), None);
+    assert!(
+        matches!(mismatch, Err(ClassifyError::PermissionDenied { .. })),
+        "mismatched GMUX_PANE_ID must not promote to cli: {mismatch:?}"
+    );
+
+    assert_eq!(
+        classify(50, &[tree], false, None, None).unwrap(),
+        CallerClass::Cli
+    );
+}
+
+#[test]
+fn tui_is_not_classified_by_pid() {
+    // TUI identifies via `client.attach` hello, not pid. A host process that
+    // is not intel and not in a pane tree is `cli`.
+    assert_eq!(
+        classify(7, &[], false, None, None).unwrap(),
+        CallerClass::Cli
+    );
+    assert_ne!(
+        classify(7, &[], false, None, None).unwrap(),
+        CallerClass::Tui
+    );
+}
+
+#[test]
+fn unsetting_gmux_pane_id_is_denied_not_cli() {
+    let class = classify(42, &[pane("p_parent", &[42])], false, None, None);
+    assert!(
+        matches!(class, Err(ClassifyError::PermissionDenied { .. })),
+        "a pane-tree pid without GMUX_PANE_ID is permission_denied, never cli: {class:?}"
+    );
+}
+
+#[test]
+fn unknown_peer_pid_is_refused_not_cli() {
+    let refused = classify(0, &[], false, None, None);
+    assert!(
+        matches!(refused, Err(ClassifyError::PermissionDenied { .. })),
+        "failed peer_pid must not promote to cli: {refused:?}"
+    );
+}
+
+#[test]
+fn pane_cannot_attach_as_tui() {
+    assert!(!may_attach(CallerClass::Pane));
+    assert!(!may_attach(CallerClass::Intel));
+    assert!(may_attach(CallerClass::Cli));
+    assert!(may_attach(CallerClass::Tui));
+}
+
+#[test]
+fn intel_hello_mints_once_then_requires_pid_match() {
+    let token = "secret";
+    assert_eq!(
+        intel_hello(token, token, 9, None, Some(CallerClass::Cli)).unwrap(),
+        9
+    );
+    assert_eq!(
+        intel_hello(token, token, 9, Some(9), Some(CallerClass::Cli)).unwrap(),
+        9
+    );
+    assert!(matches!(
+        intel_hello(token, token, 50, Some(9), Some(CallerClass::Cli)),
+        Err(ClassifyError::PermissionDenied { .. })
+    ));
+    assert!(matches!(
+        intel_hello(token, token, 101, None, Some(CallerClass::Pane)),
+        Err(ClassifyError::PermissionDenied { .. })
+    ));
+    assert!(matches!(
+        intel_hello(token, "other", 9, None, Some(CallerClass::Cli)),
+        Err(ClassifyError::PermissionDenied { .. })
+    ));
+}

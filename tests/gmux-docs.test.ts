@@ -15,4 +15,35 @@ describe("gmux docs + bindings", () => {
     expect(readme).toMatch(/tmux\.conf\.local/);
     expect(readme).toMatch(/gigamanage/);
   });
+
+  it("documents Ghostty/iTerm as the emulator and the experimental peel-fixture gate", () => {
+    const readme = readFileSync("README.md", "utf8");
+    const doc = readFileSync("docs/gmux.md", "utf8");
+    for (const text of [readme, doc]) {
+      expect(text).toMatch(/Ghostty/);
+      expect(text).toMatch(/iTerm/);
+      expect(text).toMatch(/experimental/i);
+      expect(text).toMatch(/gmux attach/);
+      expect(text).toMatch(/gmux tmux uninstall/);
+    }
+    expect(readme).toMatch(/fixtures\/grids/);
+    expect(readme).toMatch(/synthetic/i);
+  });
+
+  it("documents that attach needs a local gmuxd until fetch ships", () => {
+    const readme = readFileSync("README.md", "utf8");
+    const doc = readFileSync("docs/gmux.md", "utf8");
+    for (const text of [readme, doc]) {
+      expect(text).toMatch(/until fetch-if-missing ships/i);
+      expect(text).toMatch(/cargo build -p gmuxd/);
+      expect(text).toMatch(/GMUXD_PATH/);
+      expect(text).toMatch(/GitHub Releases/);
+      expect(text).toMatch(/checksum/i);
+      expect(text).toMatch(/aarch64-apple-darwin/);
+      expect(text).toMatch(/x86_64-apple-darwin/);
+      expect(text).toMatch(/x86_64-unknown-linux-gnu/);
+      expect(text).toMatch(/aarch64-unknown-linux-gnu/);
+      expect(text).toMatch(/mouse is not forwarded/i);
+    }
+  });
 });

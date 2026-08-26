@@ -8,7 +8,8 @@
  */
 import { describe, expect, it } from "vitest";
 import { FakeTmuxGateway } from "./fixtures/fake-gateway.js";
-import { buildDaemonDeps } from "../src/cli/commands/daemon.js";
+import { FakeMuxGateway } from "../src/services/mux-gateway.js";
+import { buildDaemonDeps, buildSidecarDeps } from "../src/cli/commands/daemon.js";
 import { WorkspaceModel } from "../src/services/workspace.js";
 import { Guardian } from "../src/services/guardian.js";
 import { ResourceMonitor } from "../src/services/resources.js";
@@ -61,5 +62,20 @@ describe("buildDaemonDeps", () => {
     };
     const decision = deps.guardian!.decide(host, [agent], 1000);
     expect(decision.action).toBe("notify");
+  });
+});
+
+describe("buildSidecarDeps", () => {
+  it("assembles mux gateway + semantic + resources + guardian", () => {
+    const gateway = new FakeMuxGateway();
+    const model = new WorkspaceModel();
+    const deps = buildSidecarDeps(gateway, model, sampleConfig, stubProvider);
+
+    expect(deps.gateway).toBe(gateway);
+    expect(deps.model).toBe(model);
+    expect(deps.semantic).toBeInstanceOf(SemanticWorker);
+    expect(deps.resources).toBeInstanceOf(ResourceMonitor);
+    expect(deps.guardian).toBeInstanceOf(Guardian);
+    expect(deps.resolveAgents).toBeUndefined();
   });
 });

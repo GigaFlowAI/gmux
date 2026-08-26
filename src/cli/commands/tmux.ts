@@ -192,6 +192,11 @@ export async function installTmuxBindings(home: string): Promise<InstallResult> 
   return { path: target, removedLegacy };
 }
 
+/** Printed by `gmux tmux install`. Uninstall still strips the managed blocks. */
+export function tmuxInstallDeprecation(): string {
+  return "use `gmux attach` inside Ghostty or iTerm. Finish work in tmux, then `gmux tmux uninstall`.";
+}
+
 export async function uninstallTmuxBindings(home: string): Promise<void> {
   const { conf, local } = tmuxConfFiles(home);
   for (const path of [conf, local]) {
@@ -223,20 +228,44 @@ export async function maybeInstallTmuxBindings(opts: {
   return { didInstall: true, path: result.path };
 }
 
+/**
+ * Setup offers uninstall when leftover bindings are present. Default is no —
+ * finish work in tmux first.
+ */
+export async function maybeUninstallTmuxBindings(opts: {
+  available: boolean;
+  ask: (question: string, fallback: boolean) => Promise<boolean>;
+  home: string;
+}): Promise<{ didUninstall: boolean }> {
+  if (!opts.available) return { didUninstall: false };
+  const report = inspectTmuxBindings(opts.home, realTmuxFs());
+  if (!report.installed && !report.leftoverLegacy) return { didUninstall: false };
+  const ok = await opts.ask(
+    `\n${bold("Remove tmux bindings? gmux is now `gmux attach` inside Ghostty/iTerm.")}\n${dim(
+      "Finish remaining tmux work first. History (`gmux ls`) still sees every transcript.",
+    )}\n`,
+    false,
+  );
+  if (!ok) return { didUninstall: false };
+  await uninstallTmuxBindings(opts.home);
+  return { didUninstall: true };
+}
+
 export function registerTmux(program: Command): void {
-  const tmux = program.command("tmux").description("manage gmux's tmux key bindings");
+  const tmux = program.command("tmux").description("manage gmux's leftover tmux key bindings");
 
   tmux
     .command("install")
-    .description("add the gmux cockpit/picker key bindings to ~/.tmux.conf (or ~/.tmux.conf.local)")
+    .description("deprecated: leftover tmux bindings; prefer gmux attach")
     .action(async () => {
+      process.stderr.write(`${yellow("deprecated")} ${tmuxInstallDeprecation()}\n`);
       const result = await installTmuxBindings(homedir());
       process.stdout.write(`${green("installed")} bindings in ${result.path}\n`);
       if (result.removedLegacy) {
-        process.stdout.write(`${dim("removed leftover gigamanage bindings so ctrl-g opens the cockpit")}\n`);
+        process.stdout.write(`${dim("removed leftover gigamanage bindings")}\n`);
       }
       process.stdout.write(
-        `${dim("reload with `tmux source-file ~/.tmux.conf`; then ctrl-g pulls up the cockpit, ctrl-shift-g browses")}\n`,
+        `${dim("reload with `tmux source-file ~/.tmux.conf`. Prefer `gmux attach`; uninstall when you leave tmux.")}\n`,
       );
     });
 
