@@ -168,11 +168,15 @@ impl Mux {
         });
     }
 
+    pub fn login_shell_argv() -> Vec<String> {
+        vec![std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())]
+    }
+
     pub fn default_argv(&self) -> Vec<String> {
         if let Some(argv) = &self.cached_harness_argv {
             return argv.clone();
         }
-        vec![std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())]
+        Self::login_shell_argv()
     }
 
     pub fn set_client_focus(&mut self, client_id: &str, pane_id: &str) {
@@ -439,8 +443,14 @@ impl Mux {
                 }
             }
         }
-        for client in self.clients.values_mut() {
-            if client.focused_pane_id.as_deref() == Some(pane_id) {
+        let lost_focus: Vec<String> = self
+            .clients
+            .iter()
+            .filter(|(_, c)| c.focused_pane_id.as_deref() == Some(pane_id))
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &lost_focus {
+            if let Some(client) = self.clients.get_mut(id) {
                 client.focused_pane_id = None;
             }
         }
@@ -448,6 +458,12 @@ impl Mux {
             "pane.exited",
             serde_json::json!({ "paneId": pane_id, "tabId": tab_id }),
         );
+        self.ensure_workspace_focusable(&workspace_id)?;
+        if let Some(fallback) = self.first_pane_in_workspace(&workspace_id) {
+            for id in lost_focus {
+                self.set_client_focus(&id, &fallback);
+            }
+        }
         Ok(())
     }
 
@@ -714,18 +730,13 @@ impl Mux {
     pub fn new_tab(&mut self, name: &str, workspace_id: Option<&str>) -> Result<String, MuxError> {
         let ws_id = match workspace_id {
             Some(id) if self.workspaces.contains_key(id) => id.to_string(),
-            _ => self
-                .workspaces
-                .keys()
-                .next()
-                .cloned()
-                .ok_or_else(|| {
-                    MuxError::rpc(
-                        "not_found",
-                        "no workspace to create a tab in",
-                        "Attach a TUI or spawn a pane first",
-                    )
-                })?,
+            _ => self.workspaces.keys().next().cloned().ok_or_else(|| {
+                MuxError::rpc(
+                    "not_found",
+                    "no workspace to create a tab in",
+                    "Attach a TUI or spawn a pane first",
+                )
+            })?,
         };
         let tab_id = new_id("t_");
         if let Some(ws) = self.workspaces.get_mut(&ws_id) {
@@ -766,7 +777,10 @@ impl Mux {
     }
 
     pub fn move_pane(&mut self, src_pane: &str, dst_tab: &str) -> Result<(), MuxError> {
-        let pane = self.panes.get(src_pane).ok_or_else(|| pane_missing(src_pane))?;
+        let pane = self
+            .panes
+            .get(src_pane)
+            .ok_or_else(|| pane_missing(src_pane))?;
         let from_tab = pane.tab_id.clone();
         let from_ws = pane.workspace_id.clone();
         let dst_ws = self
@@ -822,7 +836,10 @@ impl Mux {
         &mut self,
         plan: &serde_json::Value,
     ) -> Result<serde_json::Value, MuxError> {
-        let version = plan.get("schemaVersion").and_then(Value::as_u64).unwrap_or(0);
+        let version = plan
+            .get("schemaVersion")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
         let steps = plan
             .get("steps")
             .and_then(Value::as_array)
@@ -968,6 +985,48 @@ impl Mux {
         );
         id
     }
+
+    fn first_pane_in_workspace(&self, workspace_id: &str) -> Option<String> {
+        let ws = self.workspaces.get(workspace_id)?;
+        if let Some(main) = ws.tabs.values().find(|t| t.name == "main") {
+            if let Some(id) = main.pane_ids.first() {
+                return Some(id.clone());
+            }
+        }
+        ws.tabs.values().find_map(|t| t.pane_ids.first().cloned())
+    }
+
+    /// Last pane in a tab closes the tab. Last tab in a workspace spawns a
+    /// login shell in a new `main` tab — never zero focusable rows.
+    fn ensure_workspace_focusable(&mut self, workspace_id: &str) -> Result<(), MuxError> {
+        let empty = self
+            .workspaces
+            .get(workspace_id)
+            .map(|ws| ws.tabs.values().all(|t| t.pane_ids.is_empty()))
+            .unwrap_or(true);
+        if !empty {
+            return Ok(());
+        }
+        let cwd = self
+            .workspaces
+            .get(workspace_id)
+            .map(|ws| ws.cwd.clone())
+            .unwrap_or_else(|| PathBuf::from("/"));
+        self.spawn(SpawnOpts {
+            cwd,
+            argv: Self::login_shell_argv(),
+            env: Default::default(),
+            tab: TabSpec::New {
+                name: "main".into(),
+            },
+            focus: false,
+            peel_depth: 0,
+            client_id: None,
+            workspace_id: Some(workspace_id.to_string()),
+            template_id: None,
+        })?;
+        Ok(())
+    }
 }
 
 impl Drop for Mux {
@@ -980,7 +1039,9 @@ impl Drop for Mux {
 
 impl Mux {
     fn tab_exists(&self, tab_id: &str) -> bool {
-        self.workspaces.values().any(|ws| ws.tabs.contains_key(tab_id))
+        self.workspaces
+            .values()
+            .any(|ws| ws.tabs.contains_key(tab_id))
     }
 
     /// Same skip strings as TS `applyPlan`: unknown pane/tab is skipped, not invented.

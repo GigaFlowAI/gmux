@@ -495,8 +495,9 @@ async fn dispatch(
             ok(&req.id, json!({"panes": panes}))
         }),
         "pane.spawn" => gated(conn, req, "pane.spawn", |conn| {
-            match spawn_params(req, conn) {
-                Ok(opts) => match mux.lock().expect("mux").spawn(opts) {
+            let mut guard = mux.lock().expect("mux");
+            match spawn_params_for(req, conn, &guard) {
+                Ok(opts) => match guard.spawn(opts) {
                     Ok(spawned) => ok(&req.id, json!(spawned)),
                     Err(err) => err_of(&req.id, &err),
                 },
@@ -1134,6 +1135,71 @@ fn organize_panes_from_snapshot(snap: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+fn spawn_params_for(req: &Request, conn: &Conn, mux: &Mux) -> Result<SpawnOpts, MuxError> {
+    if matches!(conn.class, Ok(CallerClass::Pane)) {
+        return pane_template_spawn(req, conn, mux);
+    }
+    spawn_params(req, conn)
+}
+
+fn pane_template_spawn(req: &Request, conn: &Conn, mux: &Mux) -> Result<SpawnOpts, MuxError> {
+    let deny = |field: &str| {
+        MuxError::rpc(
+            "permission_denied",
+            &format!("pane may not pass {field}"),
+            "A pane may spawn --template tests|logs|review only",
+        )
+    };
+    if req.params.get("argv").is_some() {
+        return Err(deny("argv"));
+    }
+    if req.params.get("env").is_some() {
+        return Err(deny("env"));
+    }
+    if req.params.get("peelDepth").is_some() {
+        return Err(deny("peelDepth"));
+    }
+    let template_id = req
+        .params
+        .get("templateId")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if !matches!(template_id, "tests" | "logs" | "review") {
+        return Err(MuxError::rpc(
+            "permission_denied",
+            "pane may spawn --template only",
+            "Pass templateId tests, logs, or review (gmux spawn --template tests)",
+        ));
+    }
+    let parent_id = conn.env_pane_id.as_deref().ok_or_else(|| {
+        MuxError::rpc(
+            "permission_denied",
+            "pane spawn requires GMUX_PANE_ID",
+            "A descendant of a pane pid is always pane — unsetting GMUX_PANE_ID is permission_denied, never cli",
+        )
+    })?;
+    let parent = mux.panes.get(parent_id).ok_or_else(|| {
+        MuxError::rpc(
+            "not_found",
+            &format!("pane {parent_id} not found"),
+            "Run gmux panes ls --json",
+        )
+    })?;
+    Ok(SpawnOpts {
+        cwd: parent.cwd.clone(),
+        argv: Mux::login_shell_argv(),
+        env: Default::default(),
+        tab: TabSpec::New {
+            name: template_id.into(),
+        },
+        focus: false,
+        peel_depth: parent.peel_depth,
+        client_id: None,
+        workspace_id: Some(parent.workspace_id.clone()),
+        template_id: Some(template_id.to_string()),
+    })
+}
+
 fn spawn_params(req: &Request, conn: &Conn) -> Result<SpawnOpts, MuxError> {
     let cwd = req
         .params
@@ -1302,9 +1368,111 @@ mod tests {
         assert!(!allowed(CallerClass::Pane, "tab.new"));
         assert!(allowed(CallerClass::Pane, "peel"));
         assert!(allowed(CallerClass::Pane, "pane.read"));
+        assert!(allowed(CallerClass::Pane, "pane.spawn"));
         assert!(peer::is_sibling_target(Some("p_a"), "p_b"));
         assert!(!peer::is_sibling_target(Some("p_a"), "p_a"));
         assert!(peer::is_sibling_target(None, "p_a"));
+    }
+
+    fn pane_conn(pane_id: &str) -> Conn {
+        Conn {
+            class: Ok(CallerClass::Pane),
+            client_id: None,
+            peer_pid: 1,
+            env_pane_id: Some(pane_id.to_string()),
+            subscribed: false,
+        }
+    }
+
+    fn mux_with_parent(peel_depth: u32) -> (tempfile::TempDir, Mux, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut mux = Mux::new(Paths::from_dir(dir.path()), "tok".into());
+        let spawned = mux
+            .spawn(SpawnOpts {
+                cwd: dir.path().to_path_buf(),
+                argv: vec!["/bin/sleep".into(), "30".into()],
+                env: Default::default(),
+                tab: TabSpec::New {
+                    name: "main".into(),
+                },
+                focus: false,
+                peel_depth,
+                client_id: None,
+                workspace_id: None,
+                template_id: None,
+            })
+            .unwrap();
+        (dir, mux, spawned.pane_id)
+    }
+
+    #[test]
+    fn pane_spawn_denies_argv_env_peel_depth() {
+        let (_dir, mux, parent) = mux_with_parent(2);
+        let conn = pane_conn(&parent);
+        for params in [
+            json!({ "argv": ["claude"], "templateId": "tests" }),
+            json!({ "env": { "FOO": "1" }, "templateId": "tests" }),
+            json!({ "peelDepth": 0, "templateId": "tests" }),
+            json!({ "argv": ["claude"], "peelDepth": 0 }),
+            json!({}),
+        ] {
+            let req = Request {
+                id: json!("1"),
+                method: "pane.spawn".into(),
+                params,
+            };
+            let err = spawn_params_for(&req, &conn, &mux).unwrap_err();
+            assert_eq!(err.code(), "permission_denied", "{req:?} {err:?}");
+        }
+    }
+
+    #[test]
+    fn pane_spawn_template_derives_peel_depth_from_parent() {
+        let (_dir, mux, parent) = mux_with_parent(2);
+        let conn = pane_conn(&parent);
+        let req = Request {
+            id: json!("1"),
+            method: "pane.spawn".into(),
+            params: json!({ "templateId": "tests", "peelDepth": 0, "argv": ["/bin/zsh"] }),
+        };
+        let denied = spawn_params_for(&req, &conn, &mux).unwrap_err();
+        assert_eq!(denied.code(), "permission_denied");
+
+        let req = Request {
+            id: json!("1"),
+            method: "pane.spawn".into(),
+            params: json!({ "templateId": "tests" }),
+        };
+        let opts = spawn_params_for(&req, &conn, &mux).unwrap();
+        assert_eq!(opts.peel_depth, 2, "must not reset peelDepth to 0");
+        assert_eq!(opts.template_id.as_deref(), Some("tests"));
+        assert_eq!(opts.argv, Mux::login_shell_argv());
+        assert!(!opts.focus);
+        match opts.tab {
+            TabSpec::New { name } => assert_eq!(name, "tests"),
+            other => panic!("expected new tab named tests, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cli_spawn_still_accepts_argv() {
+        let dir = tempfile::tempdir().unwrap();
+        let mux = Mux::new(Paths::from_dir(dir.path()), "tok".into());
+        let conn = Conn {
+            class: Ok(CallerClass::Cli),
+            client_id: None,
+            peer_pid: 1,
+            env_pane_id: None,
+            subscribed: false,
+        };
+        let req = Request {
+            id: json!("1"),
+            method: "pane.spawn".into(),
+            params: json!({ "argv": ["claude"], "peelDepth": 0 }),
+        };
+        let opts = spawn_params_for(&req, &conn, &mux).unwrap();
+        assert_eq!(opts.argv, vec!["claude"]);
+        assert_eq!(opts.peel_depth, 0);
     }
 
     fn dispatch_send_keys(class: CallerClass, env: Option<&str>, target: &str) -> Value {

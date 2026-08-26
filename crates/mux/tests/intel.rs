@@ -97,3 +97,18 @@ async fn guardian_broadcast_delivers_to_harness_and_session_id() {
     assert_eq!(h.last_input(&shell.pane_id), "");
     assert_eq!(h.last_input(&harness_only.pane_id), "");
 }
+
+#[tokio::test]
+async fn last_input_caps_at_4kib() {
+    let h = harness::start().await;
+    let pane = h.spawn_shell("/tmp").await;
+    let big = vec![b'x'; gmuxd::pane::LAST_INPUT_CAP + 1234];
+    h.write_input(&pane.pane_id, &big).await;
+    let got = h.last_input(&pane.pane_id);
+    assert_eq!(got.len(), gmuxd::pane::LAST_INPUT_CAP);
+    assert!(got.bytes().all(|b| b == b'x'));
+    h.write_input(&pane.pane_id, b"yz").await;
+    let got = h.last_input(&pane.pane_id);
+    assert_eq!(got.len(), gmuxd::pane::LAST_INPUT_CAP);
+    assert!(got.ends_with("yz"));
+}

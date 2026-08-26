@@ -13,6 +13,9 @@ use crate::shadow::Shadow;
 
 const CROCKFORD: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
+/// Bound on `Pane.last_input`. Production must not grow this without a cap.
+pub const LAST_INPUT_CAP: usize = 4096;
+
 pub fn encode_crockford(bytes: &[u8]) -> String {
     let mut bits: u32 = 0;
     let mut value: u32 = 0;
@@ -56,7 +59,7 @@ pub struct Pane {
     pub session_id: Option<String>,
     pub template_id: Option<String>,
     pub grid: Arc<Mutex<Grid>>,
-    /// Raw bytes last written via `write_input` / `send_keys` (tests + peel).
+    /// Last bytes written via `write_input` / `send_keys`, capped at `LAST_INPUT_CAP`.
     pub last_input: Vec<u8>,
     writer: Option<Box<dyn Write + Send>>,
     child: Option<Box<dyn portable_pty::Child + Send + Sync>>,
@@ -191,6 +194,10 @@ impl Pane {
 
     pub fn write_input(&mut self, bytes: &[u8]) -> Result<(), MuxError> {
         self.last_input.extend_from_slice(bytes);
+        let extra = self.last_input.len().saturating_sub(LAST_INPUT_CAP);
+        if extra > 0 {
+            self.last_input.drain(..extra);
+        }
         self.shadow.feed(bytes);
         if let Some(writer) = self.writer.as_mut() {
             writer.write_all(bytes).map_err(MuxError::from)?;

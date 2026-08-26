@@ -117,6 +117,98 @@ fn workspace_id_uses_git_root_not_nested_cwd() {
 }
 
 #[tokio::test]
+async fn last_pane_close_spawns_login_shell_in_main() {
+    let h = harness::start().await;
+    let client = h.attach();
+    let pane = client.focused_pane_id.clone().unwrap();
+    assert_eq!(h.snapshot()["panes"].as_array().unwrap().len(), 1);
+    h.mux().lock().unwrap().close_pane(&pane).unwrap();
+    let snap = h.snapshot();
+    let panes = snap["panes"].as_array().expect("panes");
+    assert_eq!(panes.len(), 1, "never zero focusable rows: {panes:?}");
+    assert_ne!(panes[0]["paneId"], pane);
+    let tabs = snap["workspaces"][0]["tabs"].as_array().expect("tabs");
+    assert!(
+        tabs.iter()
+            .any(|t| t["name"] == "main" && !t["paneIds"].as_array().unwrap().is_empty()),
+        "new main tab: {tabs:?}"
+    );
+    let focused = h.focused_opt(&client.id);
+    assert!(focused.is_some(), "client must keep a focused pane");
+    assert_ne!(focused.as_deref(), Some(pane.as_str()));
+    let argv = h.argv(panes[0]["paneId"].as_str().unwrap());
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+    assert_eq!(argv, vec![shell]);
+}
+
+#[tokio::test]
+async fn last_tab_close_spawns_login_shell_in_main() {
+    let h = harness::start().await;
+    let client = h.attach();
+    let first = client.focused_pane_id.clone().unwrap();
+    let (cwd, tab) = {
+        let mux = h.mux();
+        let guard = mux.lock().unwrap();
+        let pane = guard.panes.get(&first).expect("pane");
+        (pane.cwd.to_string_lossy().into_owned(), pane.tab_id.clone())
+    };
+    let extra = h.spawn_shell(&cwd).await;
+    h.mux()
+        .lock()
+        .unwrap()
+        .move_pane(&extra.pane_id, &tab)
+        .unwrap();
+    assert_eq!(h.snapshot()["panes"].as_array().unwrap().len(), 2);
+    h.mux().lock().unwrap().close_tab(&tab).unwrap();
+    let snap = h.snapshot();
+    let panes = snap["panes"].as_array().expect("panes");
+    assert_eq!(
+        panes.len(),
+        1,
+        "last tab close must leave a shell: {panes:?}"
+    );
+    assert!(h.focused_opt(&client.id).is_some());
+    let tabs = snap["workspaces"][0]["tabs"].as_array().expect("tabs");
+    assert!(tabs.iter().any(|t| t["name"] == "main"), "{tabs:?}");
+}
+
+#[tokio::test]
+async fn closing_last_pane_of_one_tab_keeps_other_tabs() {
+    let h = harness::start().await;
+    let client = h.attach();
+    let first = client.focused_pane_id.clone().unwrap();
+    let cwd = {
+        let mux = h.mux();
+        let guard = mux.lock().unwrap();
+        guard
+            .panes
+            .get(&first)
+            .expect("pane")
+            .cwd
+            .to_string_lossy()
+            .into_owned()
+    };
+    let extra = h.spawn_shell(&cwd).await;
+    let extra_tab = h
+        .mux()
+        .lock()
+        .unwrap()
+        .panes
+        .get(&extra.pane_id)
+        .expect("extra")
+        .tab_id
+        .clone();
+    h.mux().lock().unwrap().close_pane(&first).unwrap();
+    assert!(!h.has_pane(&first));
+    assert!(h.has_pane(&extra.pane_id));
+    let snap = h.snapshot();
+    let panes = snap["panes"].as_array().unwrap();
+    assert_eq!(panes.len(), 1);
+    assert_eq!(panes[0]["tabId"], extra_tab);
+    assert_eq!(h.focused(&client.id), extra.pane_id);
+}
+
+#[tokio::test]
 async fn data_plane_streams_this_clients_focused_pane() {
     let h = harness::start().await;
     let c = h.attach();
