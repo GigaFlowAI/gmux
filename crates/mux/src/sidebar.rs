@@ -2,6 +2,7 @@
 //! Prompt footer is drawn here; it is not interactive until Task 8.
 
 use serde_json::Value;
+use unicode_width::UnicodeWidthChar;
 
 /// Left chrome width in columns. PTY winsize = term cols − this.
 pub const WIDTH: u16 = 40;
@@ -169,8 +170,8 @@ pub fn hit_test(
 pub fn render_lines(model: &Model, height: u16) -> Vec<String> {
     let height = height.max(1) as usize;
     let width = WIDTH as usize;
-    let mut lines = vec![String::new(); height];
-    lines[height - 1] = clip(">", width);
+    let mut lines = vec![clip_cols("", width); height];
+    lines[height - 1] = clip_cols(">", width);
     if height == 1 {
         return lines;
     }
@@ -179,14 +180,14 @@ pub fn render_lines(model: &Model, height: u16) -> Vec<String> {
         if y + 1 >= height {
             break;
         }
-        lines[y] = clip(pin, width);
+        lines[y] = clip_cols(pin, width);
         y += 1;
     }
     for pane in &model.panes {
         if y + 1 >= height {
             break;
         }
-        lines[y] = clip(&pane.glance(), width);
+        lines[y] = clip_cols(&pane.glance(), width);
         y += 1;
     }
     lines
@@ -248,8 +249,30 @@ fn pane_name(p: &Value) -> String {
     "pane".into()
 }
 
-fn clip(s: &str, width: usize) -> String {
-    s.chars().take(width).collect()
+/// Terminal display columns (East Asian Width). Matches ratatui / unicode-width.
+pub fn display_cols(s: &str) -> usize {
+    s.chars().map(|c| c.width().unwrap_or(0)).sum()
+}
+
+/// Clip to `width` display columns, then pad with spaces so the field is exactly
+/// that wide. A trailing wide character that will not fit is dropped (one
+/// column of padding instead), so the line cannot spill into the PTY.
+pub fn clip_cols(s: &str, width: usize) -> String {
+    let mut out = String::new();
+    let mut used = 0usize;
+    for c in s.chars() {
+        let w = c.width().unwrap_or(0);
+        if used + w > width {
+            break;
+        }
+        out.push(c);
+        used += w;
+    }
+    while used < width {
+        out.push(' ');
+        used += 1;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -323,17 +346,19 @@ mod tests {
         });
         let model = Model::from_snapshot(&snap, None);
         let lines = render_lines(&model, 5);
-        assert_eq!(lines[0], "⚠ pressure 91%");
+        assert_eq!(lines[0].trim_end(), "⚠ pressure 91%");
+        assert_eq!(display_cols(&lines[0]), WIDTH as usize);
         assert!(lines[1].starts_with("● webshop"), "{}", lines[1]);
-        assert_eq!(lines[4], ">");
+        assert_eq!(lines[4].trim_end(), ">");
     }
 
     #[test]
     fn layout_draws_prompt_footer() {
         let model = Model::default();
         let lines = render_lines(&model, 3);
-        assert_eq!(lines.last().map(String::as_str), Some(">"));
-        assert_eq!(lines[0], "");
+        assert_eq!(lines.last().map(|s| s.trim_end()), Some(">"));
+        assert_eq!(display_cols(lines.last().unwrap()), WIDTH as usize);
+        assert_eq!(lines[0].trim_end(), "");
     }
 
     #[test]
@@ -341,8 +366,26 @@ mod tests {
         let snap = json!({ "intel": { "up": false }, "panes": [], "guardianLog": [] });
         let model = Model::from_snapshot(&snap, None);
         let lines = render_lines(&model, 3);
-        assert_eq!(lines[0], "⚠ intel down");
-        assert_eq!(lines[2], ">");
+        assert_eq!(lines[0].trim_end(), "⚠ intel down");
+        assert_eq!(display_cols(&lines[0]), WIDTH as usize);
+        assert_eq!(lines[2].trim_end(), ">");
+    }
+
+    #[test]
+    fn clip_uses_display_width_not_scalar_count() {
+        // CJK ideograph is East Asian Width Wide = 2 columns.
+        let wide = "全".repeat(25); // 50 columns, 25 scalars
+        let line = clip_cols(&wide, 40);
+        assert_eq!(display_cols(&line), 40);
+        assert_eq!(line.chars().filter(|c| *c == '全').count(), 20);
+
+        let pin = format!("⚠ {}", "x".repeat(50));
+        let line = clip_cols(&pin, 40);
+        assert_eq!(display_cols(&line), 40);
+        assert!(
+            line.chars().count() <= 40,
+            "scalar count must not exceed display width"
+        );
     }
 
     #[test]

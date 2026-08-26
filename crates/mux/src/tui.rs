@@ -56,6 +56,54 @@ pub fn is_detach_key(ctrl: bool, ch: char) -> bool {
     ctrl && matches!(ch, 'q' | 'Q')
 }
 
+/// In-flight `session.snapshot` correlated by request id. Peel / focus replies
+/// share the control stream and must not clear this.
+#[derive(Debug, Default)]
+pub(crate) struct SnapFlight {
+    id: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SnapOutcome {
+    Ignore,
+    Applied,
+    Failed,
+}
+
+impl SnapFlight {
+    pub(crate) fn idle(&self) -> bool {
+        self.id.is_none()
+    }
+
+    pub(crate) fn sent(&mut self, id: impl Into<String>) {
+        self.id = Some(id.into());
+    }
+
+    pub(crate) fn on_reply(&mut self, v: &Value) -> (SnapOutcome, Option<Value>) {
+        if self.id.as_deref() != reply_id(v).as_deref() {
+            return (SnapOutcome::Ignore, None);
+        }
+        self.id = None;
+        if v.get("error").is_some() {
+            return (SnapOutcome::Failed, None);
+        }
+        let result = v.get("result").cloned().unwrap_or(Value::Null);
+        if result.get("panes").is_some() || result.get("workspaces").is_some() {
+            (SnapOutcome::Applied, Some(result))
+        } else {
+            (SnapOutcome::Failed, None)
+        }
+    }
+}
+
+fn reply_id(v: &Value) -> Option<String> {
+    match v.get("id") {
+        Some(Value::String(s)) => Some(s.clone()),
+        Some(Value::Number(n)) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
 pub async fn run(cwd: PathBuf) -> Result<(), TuiError> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err(TuiError::fail(
@@ -159,7 +207,7 @@ pub async fn run(cwd: PathBuf) -> Result<(), TuiError> {
     let mut last_frame: Option<Frame> = None;
     let mut next_id: u64 = 4;
     let mut last_snap = Instant::now();
-    let mut snap_in_flight = false;
+    let mut snap = SnapFlight::default();
     let mut term_rows = term_rows;
 
     paint(&mut terminal, last_frame.as_ref(), &model, mode, false)?;
@@ -223,26 +271,25 @@ pub async fn run(cwd: PathBuf) -> Result<(), TuiError> {
                 let Some(line) = line else { continue };
                 let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
                 if v.get("event").is_some() {
-                    send_rpc(
-                        &mut ctrl_write,
-                        &mut next_id,
-                        "session.snapshot",
-                        json!({}),
-                    )
-                    .await?;
-                    snap_in_flight = true;
+                    if snap.idle() {
+                        let id = send_rpc(
+                            &mut ctrl_write,
+                            &mut next_id,
+                            "session.snapshot",
+                            json!({}),
+                        )
+                        .await?;
+                        snap.sent(id);
+                    }
                     continue;
                 }
-                if v.get("error").is_some() {
-                    snap_in_flight = false;
-                }
-                if let Some(result) = v.get("result") {
-                    if result.get("panes").is_some() || result.get("workspaces").is_some() {
-                        apply_snapshot(&mut model, result, focused.as_deref());
-                        snap_in_flight = false;
-                        last_snap = Instant::now();
-                        paint(&mut terminal, last_frame.as_ref(), &model, mode, false)?;
-                    }
+                let (outcome, result) = snap.on_reply(&v);
+                if let Some(result) = result {
+                    apply_snapshot(&mut model, &result, focused.as_deref());
+                    last_snap = Instant::now();
+                    paint(&mut terminal, last_frame.as_ref(), &model, mode, false)?;
+                } else if outcome == SnapOutcome::Failed {
+                    last_snap = Instant::now();
                 }
             }
             pkt = frames::read_packet(&mut reader) => {
@@ -264,15 +311,15 @@ pub async fn run(cwd: PathBuf) -> Result<(), TuiError> {
                 paint(&mut terminal, last_frame.as_ref(), &model, mode, clear)?;
             }
             _ = tokio::time::sleep(Duration::from_millis(16)) => {
-                if !snap_in_flight && last_snap.elapsed() >= Duration::from_millis(500) {
-                    send_rpc(
+                if snap.idle() && last_snap.elapsed() >= Duration::from_millis(500) {
+                    let id = send_rpc(
                         &mut ctrl_write,
                         &mut next_id,
                         "session.snapshot",
                         json!({}),
                     )
                     .await?;
-                    snap_in_flight = true;
+                    snap.sent(id);
                 }
             }
         }
@@ -425,13 +472,13 @@ async fn send_rpc(
     next_id: &mut u64,
     method: &str,
     params: Value,
-) -> Result<(), TuiError> {
+) -> Result<String, TuiError> {
     let id = next_id.to_string();
     *next_id += 1;
     let req = json!({ "id": id, "method": method, "params": params });
     writer.write_all(format!("{req}\n").as_bytes()).await?;
     writer.flush().await?;
-    Ok(())
+    Ok(id)
 }
 
 fn key_to_keymap(key: &KeyEvent) -> keymap::Key {
@@ -595,16 +642,7 @@ fn paint_sidebar(buf: &mut ratatui::buffer::Buffer, area: Rect, model: &Model, m
 }
 
 fn put_line(buf: &mut ratatui::buffer::Buffer, area: Rect, y: u16, text: &str, style: Style) {
-    for (i, ch) in text.chars().enumerate() {
-        let x = i as u16;
-        if x >= area.width {
-            break;
-        }
-        let dest = &mut buf[(area.x + x, area.y + y)];
-        let mut tmp = [0u8; 4];
-        dest.set_symbol(ch.encode_utf8(&mut tmp));
-        dest.set_style(style);
-    }
+    buf.set_stringn(area.x, area.y + y, text, area.width as usize, style);
 }
 
 fn argb(c: u32) -> Color {
@@ -670,5 +708,58 @@ impl Drop for Restore {
         let mut stdout = io::stdout();
         let _ = execute!(stdout, DisableMouseCapture, LeaveAlternateScreen);
         let _ = stdout.flush();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn peel_error_does_not_clear_snapshot_in_flight() {
+        let mut flight = SnapFlight::default();
+        flight.sent("5");
+        let (outcome, result) = flight.on_reply(&json!({
+            "id": "6",
+            "error": {"code": "peel_bounded", "message": "bounded", "fix": "spawn"}
+        }));
+        assert_eq!(outcome, SnapOutcome::Ignore);
+        assert!(result.is_none());
+        assert!(!flight.idle());
+
+        let (outcome, result) = flight.on_reply(&json!({
+            "id": "5",
+            "result": { "panes": [], "workspaces": [] }
+        }));
+        assert_eq!(outcome, SnapOutcome::Applied);
+        assert!(result.is_some());
+        assert!(flight.idle());
+    }
+
+    #[test]
+    fn focus_ok_does_not_apply_as_snapshot() {
+        let mut flight = SnapFlight::default();
+        flight.sent("8");
+        let (outcome, result) = flight.on_reply(&json!({
+            "id": "7",
+            "result": { "ok": true }
+        }));
+        assert_eq!(outcome, SnapOutcome::Ignore);
+        assert!(result.is_none());
+        assert!(!flight.idle());
+    }
+
+    #[test]
+    fn snapshot_error_clears_in_flight_by_id() {
+        let mut flight = SnapFlight::default();
+        flight.sent("5");
+        let (outcome, result) = flight.on_reply(&json!({
+            "id": "5",
+            "error": {"code": "io", "message": "mux closed", "fix": "retry"}
+        }));
+        assert_eq!(outcome, SnapOutcome::Failed);
+        assert!(result.is_none());
+        assert!(flight.idle());
     }
 }

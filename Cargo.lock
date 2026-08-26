@@ -305,6 +305,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "ulid",
+ "unicode-width 0.2.0",
  "vte",
 ]
 
