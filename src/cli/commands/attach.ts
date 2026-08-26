@@ -5,6 +5,16 @@ import type { Command } from "commander";
 import { GmuxError } from "../../core/errors.js";
 import { ensureMuxd, ensureSidecar, findGmuxd } from "./spawn.js";
 
+/** Hidden `gmux cockpit` / `gmux overlay` aliases redirect here. */
+export const LEGACY_SURFACE_FIX = "use gmux attach";
+
+export function legacySurfaceError(name: string): GmuxError {
+  return new GmuxError(`${name} is removed; ctrl+g opens the sidebar.`, {
+    fix: LEGACY_SURFACE_FIX,
+    exitCode: 2,
+  });
+}
+
 /**
  * Start or connect to gmuxd, then exec the full-bleed TUI (`gmuxd attach`).
  * `ctrl+q` detaches without SIGHUP.

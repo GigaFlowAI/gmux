@@ -37,6 +37,13 @@ fn classify_table() {
         "missing GMUX_PANE_ID must not promote to cli: {missing:?}"
     );
 
+    // Named Task 13 case: unsetting GMUX_PANE_ID is denied, never cli.
+    let unset = classify(42, &[pane("p_x", &[42])], false, None, None);
+    assert!(
+        matches!(unset, Err(ClassifyError::PermissionDenied { .. })),
+        "unsetting GMUX_PANE_ID must not promote to cli: {unset:?}"
+    );
+
     let mismatch = classify(101, &[tree.clone()], false, Some("p_other"), None);
     assert!(
         matches!(mismatch, Err(ClassifyError::PermissionDenied { .. })),
@@ -60,6 +67,15 @@ fn tui_is_not_classified_by_pid() {
     assert_ne!(
         classify(7, &[], false, None, None).unwrap(),
         CallerClass::Tui
+    );
+}
+
+#[test]
+fn unsetting_gmux_pane_id_is_denied_not_cli() {
+    let class = classify(42, &[pane("p_parent", &[42])], false, None, None);
+    assert!(
+        matches!(class, Err(ClassifyError::PermissionDenied { .. })),
+        "a pane-tree pid without GMUX_PANE_ID is permission_denied, never cli: {class:?}"
     );
 }
 

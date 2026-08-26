@@ -15,4 +15,18 @@ describe("gmux docs + bindings", () => {
     expect(readme).toMatch(/tmux\.conf\.local/);
     expect(readme).toMatch(/gigamanage/);
   });
+
+  it("documents Ghostty/iTerm as the emulator and the experimental peel-fixture gate", () => {
+    const readme = readFileSync("README.md", "utf8");
+    const doc = readFileSync("docs/gmux.md", "utf8");
+    for (const text of [readme, doc]) {
+      expect(text).toMatch(/Ghostty/);
+      expect(text).toMatch(/iTerm/);
+      expect(text).toMatch(/experimental/i);
+      expect(text).toMatch(/gmux attach/);
+      expect(text).toMatch(/gmux tmux uninstall/);
+    }
+    expect(readme).toMatch(/fixtures\/grids/);
+    expect(readme).toMatch(/synthetic/i);
+  });
 });

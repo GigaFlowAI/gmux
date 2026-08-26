@@ -1,9 +1,21 @@
+import { Command } from "commander";
 import { describe, expect, it } from "vitest";
-import { buildFrame, cockpitApplyTarget, sessionsForSnapshot } from "../src/cli/commands/cockpit.js";
+import { buildFrame, cockpitApplyTarget, registerCockpit, sessionsForSnapshot } from "../src/cli/commands/cockpit.js";
+import { GmuxError } from "../src/core/errors.js";
 import type { WorkspaceSnapshot } from "../src/core/gmux-types.js";
 import type { SessionRecord } from "../src/core/types.js";
 
 const snap: WorkspaceSnapshot = { version: 1, updatedAt: 0, panes: [], hostPressure: null, guardianLog: [] };
+
+describe("registerCockpit", () => {
+  it("is hidden and exits 2 with fix: use gmux attach", async () => {
+    const program = new Command();
+    program.exitOverride();
+    registerCockpit(program);
+    expect(program.helpInformation()).not.toMatch(/\bcockpit\b/);
+    await expect(program.parseAsync(["cockpit"], { from: "user" })).rejects.toBeInstanceOf(GmuxError);
+  });
+});
 
 describe("cockpit buildFrame", () => {
   it("clears the screen and shows the pane count", () => {

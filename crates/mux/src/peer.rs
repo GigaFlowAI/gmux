@@ -105,6 +105,14 @@ pub fn may_attach(class: CallerClass) -> bool {
     matches!(class, CallerClass::Cli | CallerClass::Tui)
 }
 
+/// True when a pane caller is targeting a pane other than itself.
+pub fn is_sibling_target(env_pane_id: Option<&str>, target_pane_id: &str) -> bool {
+    match env_pane_id {
+        Some(id) => id != target_pane_id,
+        None => true,
+    }
+}
+
 /// Intel `hello`: token + pid. First hello (no `intelPid` yet) may mint the
 /// peer pid only for a non-pane caller. Later hellos must match the minted pid.
 /// Token without pid match is `permission_denied`.

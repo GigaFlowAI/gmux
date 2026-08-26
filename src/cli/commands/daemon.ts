@@ -12,6 +12,7 @@ import type { Command } from "commander";
 
 import { GmuxError } from "../../core/errors.js";
 import type { GmuxConfig } from "../../core/gmux-types.js";
+import { SCHEMA_VERSION } from "../../core/types.js";
 import { readConfig, resolveAgentHarness, resolveGmuxConfig } from "../../services/config.js";
 import { Daemon, type DaemonDeps } from "../../services/daemon.js";
 import { readSnapshotFile } from "../../services/daemon-client.js";
@@ -35,7 +36,7 @@ import { SidecarDaemon, type SidecarDaemonDeps } from "../../services/sidecar-da
 import { RealTmuxGateway, type TmuxGateway } from "../../services/tmux-gateway.js";
 import { WorkspaceModel } from "../../services/workspace.js";
 import { paintFromSnapshot } from "../border-client.js";
-import { dim, green, red } from "../format.js";
+import { dim, green, jsonEnvelope, red } from "../format.js";
 import { enableBorder } from "../tmux-label.js";
 import { muxPidAlive, readMuxLock } from "./spawn.js";
 
@@ -296,18 +297,22 @@ export function registerDaemon(program: Command): void {
   cmd
     .command("status")
     .description("show whether mux and intel are running")
-    .action(async () => {
+    .option("--json", "emit JSON for scripts and agents")
+    .action(async (options: { json?: boolean }) => {
       const lock = await readMuxLock();
       const muxPid = lock?.muxPid ?? null;
       const intelPid = lock?.intelPid ?? null;
       const muxUp = muxPid != null && muxPidAlive(muxPid);
       const intelUp = intelPid != null && muxPidAlive(intelPid);
-      process.stdout.write(
-        renderStatus({
-          mux: { up: muxUp, pid: muxUp ? muxPid : null },
-          intel: { up: intelUp, pid: intelUp ? intelPid : null },
-        }),
-      );
+      const status = {
+        mux: { up: muxUp, pid: muxUp ? muxPid : null },
+        intel: { up: intelUp, pid: intelUp ? intelPid : null },
+      };
+      if (options.json) {
+        process.stdout.write(`${jsonEnvelope(SCHEMA_VERSION, status)}\n`);
+        return;
+      }
+      process.stdout.write(renderStatus(status));
 
       const snap = await readSnapshotFile();
       if (snap) {

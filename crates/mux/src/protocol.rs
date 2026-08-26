@@ -503,13 +503,23 @@ async fn dispatch(
                 Err(err) => err_of(&req.id, &err),
             }
         }),
-        "pane.send_keys" => gated(conn, req, "pane.send_keys", |_| {
+        "pane.send_keys" => gated(conn, req, "pane.send_keys", |conn| {
             let pane_id = req
                 .params
                 .get("paneId")
                 .and_then(Value::as_str)
                 .unwrap_or("");
             let keys = req.params.get("keys").and_then(Value::as_str).unwrap_or("");
+            if let Ok(CallerClass::Pane) = conn.class {
+                if peer::is_sibling_target(conn.env_pane_id.as_deref(), pane_id) {
+                    return error(
+                        &req.id,
+                        "permission_denied",
+                        "pane may not send_keys to siblings",
+                        "A pane can only type into itself; sibling send_keys is denied",
+                    );
+                }
+            }
             match mux.lock().expect("mux").send_keys(pane_id, keys) {
                 Ok(()) => ok(&req.id, json!({"ok": true})),
                 Err(err) => err_of(&req.id, &err),
@@ -1270,6 +1280,19 @@ mod tests {
         assert!(allowed(CallerClass::Tui, "organize.apply"));
         assert!(allowed(CallerClass::Tui, "tab.new"));
         assert!(allowed(CallerClass::Tui, "pane.send_keys"));
+    }
+
+    #[test]
+    fn pane_cannot_organize_apply_or_send_keys_siblings() {
+        assert!(!allowed(CallerClass::Pane, "organize.apply"));
+        assert!(!allowed(CallerClass::Pane, "pane.send_keys"));
+        assert!(!allowed(CallerClass::Pane, "pane.close"));
+        assert!(!allowed(CallerClass::Pane, "tab.new"));
+        assert!(allowed(CallerClass::Pane, "peel"));
+        assert!(allowed(CallerClass::Pane, "pane.read"));
+        assert!(peer::is_sibling_target(Some("p_a"), "p_b"));
+        assert!(!peer::is_sibling_target(Some("p_a"), "p_a"));
+        assert!(peer::is_sibling_target(None, "p_a"));
     }
 
     #[test]

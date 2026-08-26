@@ -1,64 +1,72 @@
 # gmux — the always-on awareness layer
 
-**Working name:** gmux ("giga multiplexer" — tmux, but LLM-native). It ships as the `gmux` binary; `gmux` is the product name for the daemon, cockpit, borders, and guardian described here.
+**Working name:** gmux ("giga multiplexer"). It ships as the `gmux` binary.
+gmux is a multiplexer TUI that runs *inside* Ghostty, iTerm, or kitty — it is
+not a terminal emulator. Open an emulator, run `gmux attach`.
+
+> **Experimental** until peel extractors have captured (non-synthetic) grid
+> fixtures per harness. Synthetic fixtures already exist under
+> `tests/fixtures/grids/{claude-code,codex,shell}/`.
 
 ## Core job
 
-Running many AI coding agents across a tmux workspace has a high **attention tax**: to know what any pane is doing — and which one needs you — you have to focus each pane in turn. Built-in tools show process state at best; nothing tells you *what the work is* at a glance, across everything.
+Running many AI coding agents has a high **attention tax**: to know what any
+pane is doing — and which one needs you — you have to focus each pane in turn.
+Built-in tools show process state at best; nothing tells you *what the work is*
+at a glance, across everything.
 
 > gmux lowers your attention tax — glance at the workspace and instantly understand what every pane is doing, without checking each one.
 
-It's not a command you invoke and wait on. It's ambient: start the daemon once, and your tmux borders and the cockpit overlay stay current on their own.
+It's ambient: `gmux attach` starts `gmuxd` (and the intel sidecar) if needed.
+The sidebar stays current. History (`gmux ls`) still reads session files and
+does not require gmuxd.
+
+**Clean break from tmux.** There is no `gmux.backend` flag. Finish remaining
+work in tmux; then `gmux tmux uninstall` and `gmux attach`. `gmux tmux install`
+is deprecated and prints that redirect. Uninstall still strips `# >>> gmux >>>`
+and leftover `# >>> gigamanage >>>` from `~/.tmux.conf` and `~/.tmux.conf.local`.
 
 ## Two-layer signal
 
 You cannot run an LLM continuously on every pane — too slow, too expensive. The signal is split into two speeds:
 
-- **Instant layer (no LLM).** Local heuristics classify each pane's state — `working | idle | waiting | error | done` — and read per-pane and host memory every tick, in milliseconds. This is the triage-critical signal, and it is always fresh.
+- **Instant layer (no LLM).** Local heuristics classify each pane's state — `working | idle | waiting | error | done` — and read per-pane and host memory every tick, in milliseconds. This is the triage-critical signal, and it is always fresh. **ctrl+t peel spawn is mux-local** and must not wait on intel.
 - **Semantic layer (LLM, change-gated).** The human-readable "what it's doing" one-liner and full card, refreshed only when the pane's content meaningfully changes, debounced, fed full history.
 
-**Governing invariant: the fast path survives anything the slow path does.** State, memory, and the guardian never wait on the LLM or on tmux — if the model hangs or errors, labels go stale but triage keeps working.
+**Governing invariant: the fast path survives anything the slow path does.** State, memory, guardian, and peel spawn never wait on the LLM — if the sidecar hangs, labels go stale but triage and `ctrl+t` keep working.
 
 ## Architecture
 
-One long-lived **workspace daemon** (`gmux daemon`) maintains a single in-memory **workspace model** — the authoritative "what is every pane doing right now" — and pushes it to display surfaces. Everything else feeds into, or reads from, that model.
+Rust **`gmuxd`** owns PTYs, VTE grids, tabs, keymap, and two sockets (`mux.sock`
+NDJSON control + per-client binary frames). The TypeScript **intel sidecar**
+(`gmux daemon --sidecar`) patches semantics onto mux panes and never sits on
+the `ctrl+t` fast path.
 
 ```
-tmux (panes, layout, PIDs)
+Ghostty / iTerm / kitty  (the emulator — we do not replace it)
   │
   ▼
-tmux gateway (sole tmux talker)
+gmux attach  (TUI: one PTY + sidebar)
   │
   ▼
-pane registry (stable identity across re-layout)
+gmuxd  (mux.sock 0600, mux.lock, frames per client)
   │
-  ├─► agent sensor / terminal sensor
-  │       │
-  │       ▼
-  │   instant layer — state classifier + resource monitor (no LLM, every tick)
-  │       │
-  │       ├──────────────► WORKSPACE MODEL (single source of truth)
-  │       │                       │
-  │       └─► semantic layer ─────┘   (LLM, gated, a beat later)
-  │           (label + card)
+  ├─► PTY / VTE / shadow / peel (mux-local)
   │
-  ▼
-WORKSPACE MODEL ──► guardian (memory policy) ──► send-keys broadcast to agents
-       │
-       ├──► border labels (always-on, terse)
-       └──► cockpit overlay (ctrl+g, full grid)
+  └─► intel sidecar  (hello + intel.token)
+          │
+          ├─► sensors → state classifier + resource monitor (no LLM, every tick)
+          ├─► semantic layer (LLM, gated)
+          └─► guardian → mux guardian.broadcast → send_keys to agent panes
 ```
 
-- **tmux gateway** — the sole talker to tmux (`list-panes`, `capture-pane`, `pipe-pane`, `send-keys`). Isolates tmux quirks; the master test seam.
-- **Pane registry** — live tmux panes → durable records, resolving harness/session so identity survives re-layout.
-- **Sensors** — one uniform *observation* per pane regardless of source: the agent sensor tails the transcript, the terminal sensor manages a `pipe-pane` log + `capture-pane` tail.
-- **State classifier** — pure heuristics over the latest observation → `working | idle | waiting | error | done`. No LLM, deterministic.
-- **Resource monitor** — walks the process subtree from each pane's `pane_pid`, sums RSS, and reads host memory pressure from the OS.
-- **Semantic summarizer** — change-gated, debounced LLM call that reuses gmux's existing summarize/distill pipeline.
-- **Workspace model** — the single source of truth: per-pane `{identity, state, semantics, resources}` plus workspace-level `{hostPressure, guardianLog}`. Emits change events.
-- **Guardian** — watches the model for host memory pressure and, per policy, broadcasts a checkpoint message to agent panes. See below.
-- **Daemon** — ties sensors → classifiers → model on a tick (~1–2s), and exposes the model over a local unix socket plus a snapshot file (the fallback when the daemon is down).
-- **Render surfaces** — thin clients that read the model and paint: the **borders** (terse, always-on) and the **cockpit** (`ctrl+g`, full grid). They sense nothing themselves — new surfaces cost nothing in sensing.
+- **Peer ACL** — classify by pid (`LOCAL_PEERPID` / `SO_PEERCRED`). A pane-tree
+  pid is always `pane`; unsetting `GMUX_PANE_ID` is `permission_denied`, never
+  `cli`. Pane callers cannot `organize.apply` or `send_keys` to siblings.
+- **Render surfaces** — the TUI sidebar (ctrl+g from pty) and the focused PTY.
+  Funnel state never paints over the PTY.
+- **History lane** — `gmux ls` / `show` / `resume` / `grep` / `ask` still read
+  session files, still `--json` on `SCHEMA_VERSION` 1.
 
 ## The guardian: one action, explicit consent
 
@@ -69,7 +77,7 @@ The guardian is the one component in gmux that **acts** — it types into agent 
 - **Cooldown + hysteresis.** It fires once at threshold, then stays quiet for a configured number of minutes; it won't re-fire until pressure drops and re-crosses. No spamming while memory sits high.
 - **No target, no action.** With no agent panes to protect, it logs the pressure and sends nothing.
 - **Names the culprit.** The broadcast/log message includes the top memory consumer, e.g. *"host memory 92% — top consumer: pane `webshop-build` (4.2 GB); checkpoint your work and pause non-essential tasks."* When the hog is `unattributed`, it says so honestly rather than guessing.
-- **Every action is logged** to the model — timestamp, pressure, culprit — and the cockpit shows the log at the top.
+- **Every action is logged** to the model — timestamp, pressure, culprit — and the attach sidebar shows the log.
 
 ## Memory attribution — read the numbers correctly
 
@@ -81,8 +89,10 @@ gmux attributes memory two ways: `perPaneRss` (per-pane subtree RSS, for ranking
 
 ## Surfaces
 
-- **Borders** — always-on, terse: `gmux tmux install` binds `alt-g` to toggle them (writing `~/.tmux.conf.local` when the live conf sources it — Oh My Tmux — rather than through that theme's `~/.tmux.conf` symlink); each pane's border shows its current state glyph and headline, painted straight from the workspace model, zero sensing.
-- **Cockpit** (`gmux cockpit`, bound to `ctrl+g`) — the full-workspace grid: every pane's state, memory, one-liner, and last activity, with the guardian log pinned at the top. Reads the daemon's live socket, falling back to the snapshot file (marked stale) when the daemon isn't reachable.
-- **Picker** (`gmux ls`, `gmux`, `ctrl+shift+g`) — the complementary history/resume lane. See the README's "two lanes" section for how it relates to the cockpit.
+- **Attach TUI** (`gmux attach`) — one focused PTY + sidebar groups. `ctrl+g` from pty opens the sidebar; `ctrl+t` peels; `ctrl+q` detaches.
+- **Picker** (`gmux ls`, `gmux`) — the complementary history/resume lane. See the README's "two lanes" section.
+
+`gmux setup` also asks **agentHarness** (the interactive CLI for new panes /
+peels). That is not `provider` (the summarizer). `CONFIG_VERSION` stays 1.
 
 See the project [README](../README.md) for the quickstart and rendered examples.
