@@ -190,7 +190,10 @@ async fn handle_client(
             }
         };
 
-        if matches!(conn.class, Ok(CallerClass::Intel)) && req.method != "hello" {
+        if matches!(conn.class, Ok(CallerClass::Intel))
+            && req.method != "hello"
+            && !allowed(CallerClass::Intel, &req.method)
+        {
             continue;
         }
 
@@ -265,6 +268,37 @@ async fn dispatch(
                 Err(err) => err_of(&req.id, &err),
             }
         }),
+        "pane.read" => gated(conn, req, "pane.read", |conn| {
+            let pane_id = req
+                .params
+                .get("paneId")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if let Ok(CallerClass::Pane) = conn.class {
+                if conn.env_pane_id.as_deref() != Some(pane_id) {
+                    return error(
+                        &req.id,
+                        "permission_denied",
+                        "pane may only read self",
+                        "Pass paneId equal to GMUX_PANE_ID",
+                    );
+                }
+            }
+            let source = req
+                .params
+                .get("source")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let lines = req
+                .params
+                .get("lines")
+                .and_then(Value::as_u64)
+                .map(|n| n as usize);
+            match mux.lock().expect("mux").read_pane(pane_id, source, lines) {
+                Ok(value) => ok(&req.id, value),
+                Err(err) => err_of(&req.id, &err),
+            }
+        }),
         "peel" => gated(conn, req, "peel", |conn| {
             let mut guard = mux.lock().expect("mux");
             let result = if let Ok(CallerClass::Pane) = conn.class {
@@ -320,7 +354,7 @@ async fn dispatch(
             &req.id,
             "unknown_method",
             &format!("unknown method {other}"),
-            "Supported: ping, session.snapshot, pane.list, pane.spawn, pane.send_keys, pane.close, peel, events.subscribe, hello, client.attach",
+            "Supported: ping, session.snapshot, pane.list, pane.spawn, pane.send_keys, pane.close, pane.read, peel, events.subscribe, hello, client.attach",
         ),
     }
 }
@@ -353,11 +387,17 @@ fn allowed(class: CallerClass, method: &str) -> bool {
         CallerClass::Cli | CallerClass::Tui => true,
         CallerClass::Intel => matches!(
             method,
-            "hello" | "ping" | "pane.list" | "session.snapshot" | "events.subscribe"
+            "hello" | "ping" | "pane.list" | "session.snapshot" | "events.subscribe" | "pane.read"
         ),
         CallerClass::Pane => matches!(
             method,
-            "ping" | "peel" | "pane.list" | "session.snapshot" | "pane.spawn" | "events.subscribe"
+            "ping"
+                | "peel"
+                | "pane.list"
+                | "session.snapshot"
+                | "pane.spawn"
+                | "events.subscribe"
+                | "pane.read"
         ),
     }
 }

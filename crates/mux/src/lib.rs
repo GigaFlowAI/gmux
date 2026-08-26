@@ -1,5 +1,6 @@
 //! Headless gmux multiplexer (`gmuxd`).
 
+pub mod grid;
 pub mod lock;
 pub mod pane;
 pub mod paths;

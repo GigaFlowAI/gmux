@@ -3,9 +3,11 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
+use crate::grid::Grid;
 use crate::session::MuxError;
 use crate::shadow::Shadow;
 
@@ -48,6 +50,7 @@ pub struct Pane {
     pub harness: Option<String>,
     pub session_id: Option<String>,
     pub template_id: Option<String>,
+    pub grid: Arc<Mutex<Grid>>,
     writer: Option<Box<dyn Write + Send>>,
     child: Option<Box<dyn portable_pty::Child + Send + Sync>>,
     _master: Option<Box<dyn portable_pty::MasterPty + Send>>,
@@ -127,9 +130,11 @@ impl Pane {
             )
         })?;
 
+        let grid = Arc::new(Mutex::new(Grid::new(opts.cols, opts.rows)));
+        let grid_reader = grid.clone();
         std::thread::Builder::new()
             .name(format!("gmux-pty-{id}"))
-            .spawn(move || drain_pty(reader))
+            .spawn(move || drain_pty(reader, grid_reader))
             .ok();
 
         Ok(Self {
@@ -144,6 +149,7 @@ impl Pane {
             harness: None,
             session_id: None,
             template_id: None,
+            grid,
             writer: Some(writer),
             child: Some(child),
             _master: Some(pair.master),
@@ -175,12 +181,16 @@ impl Drop for Pane {
     }
 }
 
-fn drain_pty(mut reader: Box<dyn std::io::Read + Send>) {
+fn drain_pty(mut reader: Box<dyn std::io::Read + Send>, grid: Arc<Mutex<Grid>>) {
     let mut buf = [0u8; 4096];
     loop {
         match reader.read(&mut buf) {
             Ok(0) | Err(_) => break,
-            Ok(_) => {}
+            Ok(n) => {
+                if let Ok(mut g) = grid.lock() {
+                    g.feed(&buf[..n]);
+                }
+            }
         }
     }
 }

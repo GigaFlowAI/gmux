@@ -26,6 +26,7 @@ pub async fn start() -> Harness {
     }
 }
 
+#[allow(dead_code)]
 impl Harness {
     pub async fn spawn_shell(&self, cwd: &str) -> Spawned {
         self.mux
@@ -76,5 +77,29 @@ impl Harness {
             .focused(client_id)
             .unwrap()
             .to_string()
+    }
+
+    pub fn feed_grid(&self, pane_id: &str, bytes: &[u8]) {
+        let mux = self.mux.lock().unwrap();
+        mux.panes
+            .get(pane_id)
+            .expect("pane")
+            .grid
+            .lock()
+            .expect("grid")
+            .feed(bytes);
+    }
+
+    pub fn read_pane(
+        &self,
+        pane_id: &str,
+        source: &str,
+        lines: Option<usize>,
+    ) -> serde_json::Value {
+        self.mux
+            .lock()
+            .unwrap()
+            .read_pane(pane_id, source, lines)
+            .unwrap()
     }
 }

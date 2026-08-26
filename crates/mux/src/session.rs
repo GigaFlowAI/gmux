@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use tokio::sync::broadcast;
 
+use crate::grid::GridSnapshot;
 use crate::pane::{Pane, SpawnPty, new_id};
 use crate::paths::Paths;
 use crate::peer::{PidTree, tree_pids};
@@ -180,6 +181,47 @@ impl Mux {
 
     pub fn send_keys(&mut self, pane_id: &str, keys: &str) -> Result<(), MuxError> {
         self.write_input(pane_id, keys.as_bytes())
+    }
+
+    pub fn read_grid(&self, pane_id: &str, rows: Option<usize>) -> Result<GridSnapshot, MuxError> {
+        let pane = self
+            .panes
+            .get(pane_id)
+            .ok_or_else(|| pane_missing(pane_id))?;
+        let grid = pane.grid.lock().expect("grid");
+        Ok(grid.snapshot_rows(&pane.id, &foreground_command(&pane.argv), rows))
+    }
+
+    pub fn read_lines(&self, pane_id: &str, n: Option<usize>) -> Result<String, MuxError> {
+        let pane = self
+            .panes
+            .get(pane_id)
+            .ok_or_else(|| pane_missing(pane_id))?;
+        let grid = pane.grid.lock().expect("grid");
+        Ok(grid.read_lines(n))
+    }
+
+    pub fn read_pane(
+        &self,
+        pane_id: &str,
+        source: &str,
+        lines: Option<usize>,
+    ) -> Result<serde_json::Value, MuxError> {
+        match source {
+            "grid" => {
+                let snap = self.read_grid(pane_id, lines)?;
+                Ok(serde_json::to_value(snap).expect("GridSnapshot"))
+            }
+            "lines" => {
+                let text = self.read_lines(pane_id, lines)?;
+                Ok(serde_json::json!({ "text": text }))
+            }
+            other => Err(MuxError::rpc(
+                "invalid_request",
+                &format!("unknown pane.read source {other}"),
+                "Pass source: \"grid\" or source: \"lines\"",
+            )),
+        }
     }
 
     pub fn spawn(&mut self, opts: SpawnOpts) -> Result<Spawned, MuxError> {
@@ -422,6 +464,26 @@ impl Drop for Mux {
             pane.kill();
         }
     }
+}
+
+fn pane_missing(pane_id: &str) -> MuxError {
+    MuxError::rpc(
+        "not_found",
+        &format!("pane {pane_id} not found"),
+        "Run gmux panes ls --json",
+    )
+}
+
+fn foreground_command(argv: &[String]) -> String {
+    argv.first()
+        .map(|cmd| {
+            std::path::Path::new(cmd)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(cmd)
+                .to_string()
+        })
+        .unwrap_or_default()
 }
 
 fn pane_json(pane: &Pane) -> serde_json::Value {
