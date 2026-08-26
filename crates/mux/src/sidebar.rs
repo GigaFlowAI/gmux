@@ -1,5 +1,5 @@
 //! Always-on 40-col sidebar. Funnel is client-local: glance → one overview →
-//! drawer. Never paints the PTY. Prompt footer is not interactive until Task 8.
+//! drawer. Never paints the PTY. Prompt footer is typed in `prompt` mode.
 
 use serde_json::Value;
 use unicode_width::UnicodeWidthChar;
@@ -14,6 +14,8 @@ pub struct Funnel {
     selected: Option<usize>,
     drawer_open: bool,
     pending_prompt: String,
+    generation: u64,
+    confirm_plan: Option<Value>,
 }
 
 impl Funnel {
@@ -23,6 +25,8 @@ impl Funnel {
             selected: None,
             drawer_open: false,
             pending_prompt: String::new(),
+            generation: 0,
+            confirm_plan: None,
         }
     }
 
@@ -96,6 +100,68 @@ impl Funnel {
     pub fn set_pending(&mut self, c: char) {
         self.pending_prompt.clear();
         self.pending_prompt.push(c);
+    }
+
+    pub fn push_prompt(&mut self, c: char) {
+        self.pending_prompt.push(c);
+    }
+
+    pub fn backspace_prompt(&mut self) {
+        self.pending_prompt.pop();
+    }
+
+    pub fn take_prompt(&mut self) -> String {
+        std::mem::take(&mut self.pending_prompt)
+    }
+
+    pub fn clear_prompt(&mut self) {
+        self.pending_prompt.clear();
+    }
+
+    /// Monotonic generation guard (mirrors `makeGeneration` in organize-confirm.ts).
+    pub fn next_generation(&mut self) -> u64 {
+        self.generation += 1;
+        self.generation
+    }
+
+    pub fn is_current(&self, generation: u64) -> bool {
+        generation == self.generation
+    }
+
+    pub fn set_confirm_plan(&mut self, plan: Value) {
+        self.confirm_plan = Some(plan);
+        self.drawer_open = true;
+    }
+
+    pub fn confirm_plan(&self) -> Option<&Value> {
+        self.confirm_plan.as_ref()
+    }
+
+    pub fn clear_confirm(&mut self) {
+        self.confirm_plan = None;
+        self.drawer_open = false;
+    }
+
+    pub fn confirm_lines(&self, width: usize) -> Option<Vec<String>> {
+        let plan = self.confirm_plan.as_ref()?;
+        let mut lines = Vec::new();
+        let summary = plan
+            .get("summary")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        lines.push(clip_cols(summary, width));
+        if let Some(steps) = plan.get("steps").and_then(Value::as_array) {
+            for (i, step) in steps.iter().enumerate() {
+                let desc = step
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                lines.push(clip_cols(&format!("{}. {desc}", i + 1), width));
+            }
+        }
+        lines.push(clip_cols("", width));
+        lines.push(clip_cols("[Enter] apply  [Esc] cancel", width));
+        Some(lines)
     }
 
     /// Keep selection by pane id when the snapshot list is replaced.
@@ -251,7 +317,7 @@ pub enum Hit {
     ChromeRow(usize),
     /// Sidebar chrome that is not a row (pins, empty space).
     Chrome,
-    /// Dim footer `>` — not interactive until Task 8.
+    /// Prompt footer `>` — typed in `prompt` mode.
     Prompt,
     /// PTY content region; coords are content-relative (x already − WIDTH).
     Content { x: u16, y: u16 },
@@ -317,9 +383,26 @@ pub fn layout(model: &Model, funnel: &Funnel, height: u16) -> Layout {
     let width = WIDTH as usize;
     let mut lines = vec![clip_cols("", width); height];
     let mut slots = vec![Slot::Empty; height];
-    lines[height - 1] = clip_cols(">", width);
+    let prompt = if funnel.pending_prompt().is_empty() {
+        ">".to_string()
+    } else {
+        format!("> {}", funnel.pending_prompt())
+    };
+    lines[height - 1] = clip_cols(&prompt, width);
     slots[height - 1] = Slot::Prompt;
     if height == 1 {
+        return Layout { lines, slots };
+    }
+    if let Some(confirm) = funnel.confirm_lines(width) {
+        let mut y = 0;
+        for line in confirm {
+            if y + 1 >= height {
+                break;
+            }
+            lines[y] = line;
+            slots[y] = Slot::Pane(funnel.expanded().unwrap_or(0));
+            y += 1;
+        }
         return Layout { lines, slots };
     }
     let mut y = 0;
@@ -848,5 +931,36 @@ mod tests {
         assert_eq!(hit_layout(5, 1, &lay), Hit::ChromeRow(0));
         assert_eq!(hit_layout(40, 1, &lay), Hit::Content { x: 0, y: 1 });
         assert_eq!(hit_layout(2, 9, &lay), Hit::Prompt);
+    }
+
+    #[test]
+    fn prompt_footer_shows_typed_buffer() {
+        let model = Model::from_snapshot(&agent_snap(), None);
+        let mut f = Funnel::new(model.panes.iter().map(|p| p.pane_id.clone()).collect());
+        f.set_pending('g');
+        f.push_prompt('r');
+        f.push_prompt('o');
+        let lines = render(&model, &f, 8);
+        assert_eq!(lines.last().map(|s| s.trim_end()), Some("> gro"));
+        for line in &lines {
+            assert_eq!(display_cols(line), WIDTH as usize, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn confirm_drawer_shows_plan_and_hint() {
+        let model = Model::from_snapshot(&agent_snap(), None);
+        let mut f = Funnel::new(model.panes.iter().map(|p| p.pane_id.clone()).collect());
+        f.set_confirm_plan(json!({
+            "schemaVersion": 2,
+            "summary": "1 project tab(s), 1 pane(s) moved",
+            "steps": [{ "op": "new-tab", "description": "Create tab \"web\"" }],
+        }));
+        let lines = render(&model, &f, 8);
+        let joined = lines.join("\n");
+        assert!(joined.contains("1 project tab"), "{joined}");
+        assert!(joined.contains("Create tab"), "{joined}");
+        assert!(joined.contains("[Enter] apply"), "{joined}");
+        assert_eq!(lines.last().map(|s| s.trim_end()), Some(">"));
     }
 }

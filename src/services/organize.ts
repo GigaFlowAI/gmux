@@ -1,7 +1,7 @@
 /**
  * `gmux organize`: turns the live pane set into an `OrganizePlan` (grouping
- * work by project into windows) and, on request, executes that plan against
- * the tmux gateway.
+ * work by project into tabs) and, on request, executes that plan against
+ * the mux gateway.
  *
  * Two planners share the `OrganizePlanner` interface:
  *   - `HeuristicOrganizePlanner` — deterministic, no model call, no I/O. The
@@ -13,36 +13,38 @@
  *     provider, timeout, or malformed reply falls back to the heuristic.
  *
  * `applyPlan` is the only place in this file that touches the gateway. It
- * validates every step against the live pane/window set (plus handles bound
+ * validates every step against the live pane/tab set (plus handles bound
  * by earlier steps in the same run) and skips — never throws for — a step
  * that no longer makes sense, so one stale reference can't abort the rest of
  * the plan.
  *
  * DESTRUCTION GUARANTEE: `applyPlan` only ever calls
- * `newWindow`/`renameWindow`/`joinPane`/`breakPane`/`swapPane`/`selectLayout`
- * on the gateway. None of those kills a process. A pane moved out of a window
- * that tmux then closes (now empty) has already left *with* its process.
- * There is no code path from a plan to `kill-pane`/`kill-window` — those
- * verbs do not appear anywhere below, and `OrganizeStep` has no op that maps
- * to one.
+ * `newTab`/`renameTab`/`movePane`/`breakPane` on the gateway. None of those
+ * kills a process. There is no code path from a plan to `closePane`/`closeTab`
+ * — those verbs do not appear anywhere below, and `OrganizeStep` has no op
+ * that maps to one.
+ *
+ * Unattended regrouping is forbidden: classify+plan run only because the user
+ * typed in the gmux prompt or invoked `gmux organize`. Nothing here is on a
+ * timer.
  */
 
 import { basename } from "node:path";
 
 import {
-  isLayoutName,
-  type LayoutName,
+  ORGANIZE_PLAN_SCHEMA_VERSION,
   type OrganizePane,
   type OrganizePlan,
   type OrganizePlanner,
   type OrganizeStep,
-  type WindowTarget,
+  type TabTarget,
 } from "../core/organize-types.js";
 import { readConfig, resolveSummaryCommand } from "./config.js";
+import type { MuxGateway } from "./mux-gateway.js";
 import { runProviderCommand } from "./provider-process.js";
-import type { TmuxGateway } from "./tmux-gateway.js";
 
 export type { OrganizePlanner } from "../core/organize-types.js";
+export { ORGANIZE_PLAN_SCHEMA_VERSION } from "../core/organize-types.js";
 
 // ---------------------------------------------------------------------------
 // HeuristicOrganizePlanner
@@ -77,17 +79,21 @@ function byPaneId(a: OrganizePane, b: OrganizePane): number {
   return a.paneId.localeCompare(b.paneId);
 }
 
-/** Panes (from the full input set) currently sharing `windowId`. */
-function countInWindow(panes: OrganizePane[], windowId: string): number {
-  return panes.filter((p) => p.windowId === windowId).length;
+/** Panes (from the full input set) currently sharing `tabId`. */
+function countInTab(panes: OrganizePane[], tabId: string): number {
+  return panes.filter((p) => p.tabId === tabId).length;
+}
+
+function emptyPlan(summary: string, steps: OrganizeStep[] = []): OrganizePlan {
+  return { schemaVersion: ORGANIZE_PLAN_SCHEMA_VERSION, summary, steps };
 }
 
 /**
  * Deterministic, pure, no-I/O planner. Groups agent panes by project
- * (`basename(cwd)`) into one window each, and idle shells into a shared
- * "shells" window. Ignores `intent` — it has no natural-language input to
+ * (`basename(cwd)`) into one tab each, and idle shells into a shared
+ * "shells" tab. Ignores `intent` — it has no natural-language input to
  * interpret, which is exactly why it is the safe default and the fallback
- * for `LlmOrganizePlanner`.
+ * for `LlmOrganizePlanner`. No tiled layout step: tabs are groups.
  */
 export class HeuristicOrganizePlanner implements OrganizePlanner {
   async plan(panes: OrganizePane[], _intent?: string): Promise<OrganizePlan> {
@@ -110,32 +116,32 @@ export class HeuristicOrganizePlanner implements OrganizePlanner {
 
     for (const key of projectKeys) {
       const group = groups.get(key)!;
-      const anchorPane = group.find((p) => p.windowId !== null) ?? null;
-      const anchorWindowId = anchorPane?.windowId ?? null;
+      const anchorPane = group.find((p) => p.tabId !== null) ?? null;
+      const anchorTabId = anchorPane?.tabId ?? null;
 
-      let anchor: WindowTarget;
+      let anchor: TabTarget;
       let freshlyCreated = false;
-      if (anchorWindowId !== null) {
-        anchor = { kind: "window", windowId: anchorWindowId };
+      if (anchorTabId !== null) {
+        anchor = { kind: "tab", tabId: anchorTabId };
       } else {
-        const handle = `w:${key}`;
-        steps.push({ op: "new-window", handle, name: key, description: `Create window "${key}"` });
+        const handle = `t:${key}`;
+        steps.push({ op: "new-tab", handle, name: key, description: `Create tab "${key}"` });
         anchor = { kind: "handle", handle };
         freshlyCreated = true;
       }
 
       if (!freshlyCreated) {
         steps.push({
-          op: "rename-window",
-          window: anchor,
+          op: "rename-tab",
+          tab: anchor,
           name: key,
-          description: `Rename window to "${key}"`,
+          description: `Rename tab to "${key}"`,
         });
       }
 
       for (const pane of group) {
         if (pane === anchorPane) continue; // Already the anchor; nothing to move.
-        if (anchorWindowId !== null && pane.windowId === anchorWindowId) continue; // Already grouped.
+        if (anchorTabId !== null && pane.tabId === anchorTabId) continue; // Already grouped.
         steps.push({
           op: "move-pane",
           paneId: pane.paneId,
@@ -144,14 +150,12 @@ export class HeuristicOrganizePlanner implements OrganizePlanner {
         });
         movedCount += 1;
       }
-
-      steps.push({ op: "select-layout", window: anchor, layout: "tiled", description: `Tile "${key}"` });
     }
 
     if (shellPanes.length >= 2 && !shellsAlreadyAloneTogether(panes, shellPanes)) {
-      const handle = "w:shells";
-      steps.push({ op: "new-window", handle, name: "shells", description: 'Create window "shells"' });
-      const anchor: WindowTarget = { kind: "handle", handle };
+      const handle = "t:shells";
+      steps.push({ op: "new-tab", handle, name: "shells", description: 'Create tab "shells"' });
+      const anchor: TabTarget = { kind: "handle", handle };
       for (const pane of shellPanes) {
         steps.push({
           op: "move-pane",
@@ -161,26 +165,20 @@ export class HeuristicOrganizePlanner implements OrganizePlanner {
         });
         movedCount += 1;
       }
-      steps.push({
-        op: "select-layout",
-        window: anchor,
-        layout: "even-vertical",
-        description: 'Arrange "shells"',
-      });
     }
 
-    const summary = `${projectKeys.length} project window(s), ${movedCount} pane(s) moved`;
-    return { summary, steps };
+    const summary = `${projectKeys.length} project tab(s), ${movedCount} pane(s) moved`;
+    return emptyPlan(summary, steps);
   }
 }
 
-/** True when every idle shell already shares one window, alone (no other pane in it). */
+/** True when every idle shell already shares one tab, alone (no other pane in it). */
 function shellsAlreadyAloneTogether(allPanes: OrganizePane[], shellPanes: OrganizePane[]): boolean {
-  const windowIds = new Set(shellPanes.map((p) => p.windowId));
-  if (windowIds.size !== 1) return false;
-  const [windowId] = [...windowIds];
-  if (windowId === null || windowId === undefined) return false;
-  return countInWindow(allPanes, windowId) === shellPanes.length;
+  const tabIds = new Set(shellPanes.map((p) => p.tabId));
+  if (tabIds.size !== 1) return false;
+  const [tabId] = [...tabIds];
+  if (tabId === null || tabId === undefined) return false;
+  return countInTab(allPanes, tabId) === shellPanes.length;
 }
 
 // ---------------------------------------------------------------------------
@@ -191,7 +189,7 @@ export const ORGANIZE_TIMEOUT_MS = 120_000;
 const MAX_PLAN_STEPS = 200;
 
 function formatPaneLine(pane: OrganizePane): string {
-  const parts = [pane.paneId, `win=${pane.windowId ?? "?"}`];
+  const parts = [pane.paneId, `tab=${pane.tabId ?? "?"}`];
   if (pane.state) parts.push(`state=${pane.state}`);
   parts.push(`cwd=${pane.cwd}`);
   parts.push(`cmd=${pane.command}`);
@@ -203,25 +201,24 @@ function formatPaneLine(pane: OrganizePane): string {
 /** Pure. The prompt an LLM planner is asked to reply to. */
 export function buildOrganizePrompt(panes: OrganizePane[], intent: string): string {
   return [
-    "You are planning a tmux workspace reorganization.",
+    "You are planning a gmux workspace reorganization. Tabs are named groups of panes, not tiled windows.",
     "Current panes:",
     panes.map(formatPaneLine).join("\n"),
     "",
     `Intent: ${intent}`,
     "",
     "Reply with ONLY a JSON object, no prose and no code fence:",
-    '{"summary": "<short summary>", "steps": [ <step>, ... ]}',
+    `{"schemaVersion":${ORGANIZE_PLAN_SCHEMA_VERSION},"summary":"<short summary>","steps":[ <step>, ... ]}`,
     "Each <step> is exactly one of:",
-    '  {"op":"new-window","handle":"<local id>","name":"<window name>","description":"<text>"}',
-    '  {"op":"rename-window","window":<WindowTarget>,"name":"<window name>","description":"<text>"}',
-    '  {"op":"move-pane","paneId":"%N","to":<WindowTarget>,"description":"<text>"}',
-    '  {"op":"break-pane","paneId":"%N","handle":"<local id>","name":"<window name>","description":"<text>"}',
-    '  {"op":"swap-pane","a":"%N","b":"%N","description":"<text>"}',
-    '  {"op":"select-layout","window":<WindowTarget>,"layout":"tiled|even-horizontal|even-vertical|main-horizontal|main-vertical","description":"<text>"}',
-    'A <WindowTarget> is {"kind":"window","windowId":"@N"} for a window already listed above, or ' +
-      '{"kind":"handle","handle":"<local id>"} for a window created earlier in THIS plan by a new-window or break-pane step.',
+    '  {"op":"new-tab","handle":"<local id>","name":"<tab name>","description":"<text>"}',
+    '  {"op":"rename-tab","tab":<TabTarget>,"name":"<tab name>","description":"<text>"}',
+    '  {"op":"move-pane","paneId":"<pane id>","to":<TabTarget>,"description":"<text>"}',
+    '  {"op":"break-pane","paneId":"<pane id>","handle":"<local id>","name":"<tab name>","description":"<text>"}',
+    'A <TabTarget> is {"kind":"tab","tabId":"<id>"} for a tab already listed above, or ' +
+      '{"kind":"handle","handle":"<local id>"} for a tab created earlier in THIS plan by a new-tab or break-pane step.',
     "Only reference paneId values from the panes listed above.",
     "Never delete or kill anything — there is no such op, and none should be invented.",
+    "Never emit select-layout, swap-pane, or new-window — those are not grouping ops.",
   ].join("\n");
 }
 
@@ -229,11 +226,11 @@ function isNonEmptyString(v: unknown): v is string {
   return typeof v === "string" && v.length > 0;
 }
 
-function readWindowTarget(v: unknown, boundHandles: ReadonlySet<string>): WindowTarget | null {
+function readTabTarget(v: unknown, boundHandles: ReadonlySet<string>): TabTarget | null {
   if (!v || typeof v !== "object") return null;
   const o = v as Record<string, unknown>;
-  if (o["kind"] === "window" && isNonEmptyString(o["windowId"])) {
-    return { kind: "window", windowId: o["windowId"] };
+  if (o["kind"] === "tab" && isNonEmptyString(o["tabId"])) {
+    return { kind: "tab", tabId: o["tabId"] };
   }
   if (o["kind"] === "handle" && isNonEmptyString(o["handle"])) {
     if (!boundHandles.has(o["handle"])) return null; // Referenced before it was bound (or never bound).
@@ -253,18 +250,18 @@ function readStep(
   const description = isNonEmptyString(o["description"]) ? o["description"] : String(o["op"] ?? "");
 
   switch (o["op"]) {
-    case "new-window": {
+    case "new-tab": {
       if (!isNonEmptyString(o["handle"]) || !isNonEmptyString(o["name"])) return null;
-      return { op: "new-window", handle: o["handle"], name: o["name"], description };
+      return { op: "new-tab", handle: o["handle"], name: o["name"], description };
     }
-    case "rename-window": {
-      const window = readWindowTarget(o["window"], boundHandles);
-      if (!window || !isNonEmptyString(o["name"])) return null;
-      return { op: "rename-window", window, name: o["name"], description };
+    case "rename-tab": {
+      const tab = readTabTarget(o["tab"], boundHandles);
+      if (!tab || !isNonEmptyString(o["name"])) return null;
+      return { op: "rename-tab", tab, name: o["name"], description };
     }
     case "move-pane": {
       if (!isNonEmptyString(o["paneId"]) || !paneIds.has(o["paneId"])) return null;
-      const to = readWindowTarget(o["to"], boundHandles);
+      const to = readTabTarget(o["to"], boundHandles);
       if (!to) return null;
       return { op: "move-pane", paneId: o["paneId"], to, description };
     }
@@ -275,43 +272,33 @@ function readStep(
       const name = isNonEmptyString(o["name"]) ? o["name"] : undefined;
       return { op: "break-pane", paneId: o["paneId"], handle: o["handle"], name, description };
     }
-    case "swap-pane": {
-      if (!isNonEmptyString(o["a"]) || !paneIds.has(o["a"])) return null;
-      if (!isNonEmptyString(o["b"]) || !paneIds.has(o["b"])) return null;
-      return { op: "swap-pane", a: o["a"], b: o["b"], description };
-    }
-    case "select-layout": {
-      const window = readWindowTarget(o["window"], boundHandles);
-      if (!window) return null;
-      if (!isNonEmptyString(o["layout"]) || !isLayoutName(o["layout"])) return null;
-      const layout: LayoutName = o["layout"];
-      return { op: "select-layout", window, layout, description };
-    }
     default:
-      return null;
+      return null; // Unknown ops (select-layout, swap-pane, new-window, kill-*) are dropped.
   }
 }
 
 /**
  * Pure. Turns a raw model reply into a validated `OrganizePlan`, dropping —
  * never throwing on — any step that is malformed, references an unknown
- * pane, or references a window handle not bound by an earlier step in the
+ * pane, or references a tab handle not bound by an earlier step in the
  * same reply. Mirrors `parseSummaryFields`/`parseLabelFields`: take the
  * outermost `{`…`}` rather than trusting the whole reply to parse, because
  * models fence or preface their JSON more often than they should.
+ *
+ * Produced plans are always schemaVersion 2. Unknown ops are dropped.
  */
 export function parseOrganizePlan(raw: string, panes: OrganizePane[]): OrganizePlan {
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) return { summary: "", steps: [] };
+  if (start === -1 || end === -1 || end <= start) return emptyPlan("");
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw.slice(start, end + 1));
   } catch {
-    return { summary: "", steps: [] };
+    return emptyPlan("");
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { summary: "", steps: [] };
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return emptyPlan("");
 
   const obj = parsed as Record<string, unknown>;
   const rawSteps = Array.isArray(obj["steps"]) ? obj["steps"].slice(0, MAX_PLAN_STEPS) : [];
@@ -322,12 +309,12 @@ export function parseOrganizePlan(raw: string, panes: OrganizePane[]): OrganizeP
   for (const rawStep of rawSteps) {
     const step = readStep(rawStep, paneIds, boundHandles);
     if (!step) continue;
-    if (step.op === "new-window" || step.op === "break-pane") boundHandles.add(step.handle);
+    if (step.op === "new-tab" || step.op === "break-pane") boundHandles.add(step.handle);
     steps.push(step);
   }
 
   const summary = isNonEmptyString(obj["summary"]) ? obj["summary"] : `${steps.length} step(s)`;
-  return { summary, steps };
+  return emptyPlan(summary, steps);
 }
 
 /**
@@ -374,60 +361,68 @@ export interface ApplyResult {
   skipped: Array<{ step: OrganizeStep; reason: string }>;
 }
 
-function describeUnresolved(target: WindowTarget): string {
+function describeUnresolved(target: TabTarget): string {
   return target.kind === "handle"
-    ? `unbound window handle ${target.handle}`
-    : `window ${target.windowId} not present`;
+    ? `unbound tab handle ${target.handle}`
+    : `tab ${target.tabId} not present`;
 }
 
 /**
  * Execute a plan against `gateway`, one step at a time, in order.
  *
- * Every step is validated against the live pane/window set (snapshotted once,
- * up front) plus any window handle a prior step in THIS run has bound —
+ * A v1 (tmux-window) plan is not applied to mux — every step is skipped.
+ *
+ * Every step is validated against the live pane/tab set (snapshotted once,
+ * up front) plus any tab handle a prior step in THIS run has bound —
  * never against a fresh `listPanes()` call, so the validation set is stable
  * for the whole run. A step that fails validation, or whose gateway call
- * throws (a tmux race, "can't break the only pane in a window", …), is
- * pushed to `skipped` with a reason and execution continues — one bad step
- * never aborts the rest of the plan.
+ * throws, is pushed to `skipped` with a reason and execution continues —
+ * one bad step never aborts the rest of the plan.
  *
- * Only `newWindow`/`renameWindow`/`joinPane`/`breakPane`/`swapPane`/
- * `selectLayout` are ever called here. None of those kills a process.
+ * Only `newTab`/`renameTab`/`movePane`/`breakPane` are ever called here.
+ * None of those kills a process.
  */
-export async function applyPlan(plan: OrganizePlan, gateway: TmuxGateway): Promise<ApplyResult> {
-  const panes = await gateway.listPanes();
-  const livePaneIds = new Set(panes.map((p) => p.paneId));
-  const liveWindowIds = new Set(panes.map((p) => p.windowId).filter((w): w is string => w !== null));
-  const handles = new Map<string, string>();
-
+export async function applyPlan(plan: OrganizePlan, gateway: MuxGateway): Promise<ApplyResult> {
   const applied: OrganizeStep[] = [];
   const skipped: Array<{ step: OrganizeStep; reason: string }> = [];
   const skip = (step: OrganizeStep, reason: string): void => {
     skipped.push({ step, reason });
   };
 
-  const resolveWindow = (target: WindowTarget): string | null => {
-    if (target.kind === "window") return liveWindowIds.has(target.windowId) ? target.windowId : null;
+  if (plan.schemaVersion !== ORGANIZE_PLAN_SCHEMA_VERSION) {
+    for (const step of plan.steps) {
+      skip(step, `schemaVersion ${plan.schemaVersion} is not applied to mux (need ${ORGANIZE_PLAN_SCHEMA_VERSION})`);
+    }
+    return { applied, skipped };
+  }
+
+  const panes = await gateway.listPanes();
+  const livePaneIds = new Set(panes.map((p) => p.paneId));
+  const liveTabIds = new Set(panes.map((p) => p.tabId));
+  const handles = new Map<string, string>();
+
+  const resolveTab = (target: TabTarget): string | null => {
+    if (target.kind === "tab") return liveTabIds.has(target.tabId) ? target.tabId : null;
     return handles.get(target.handle) ?? null;
   };
 
   for (const step of plan.steps) {
     try {
       switch (step.op) {
-        case "new-window": {
-          const windowId = await gateway.newWindow(step.name);
-          handles.set(step.handle, windowId);
-          liveWindowIds.add(windowId);
+        case "new-tab": {
+          const tabId = await gateway.newTab(step.name);
+          handles.set(step.handle, tabId);
+          liveTabIds.add(tabId);
           applied.push(step);
           break;
         }
-        case "rename-window": {
-          const windowId = resolveWindow(step.window);
-          if (windowId === null) {
-            skip(step, describeUnresolved(step.window));
+        case "rename-tab": {
+          const tabId = resolveTab(step.tab);
+          if (tabId === null) {
+            skip(step, describeUnresolved(step.tab));
             break;
           }
-          await gateway.renameWindow(windowId, step.name);
+          await gateway.renameTab(tabId, step.name);
           applied.push(step);
           break;
         }
@@ -436,12 +431,12 @@ export async function applyPlan(plan: OrganizePlan, gateway: TmuxGateway): Promi
             skip(step, `pane ${step.paneId} no longer present`);
             break;
           }
-          const windowId = resolveWindow(step.to);
-          if (windowId === null) {
+          const tabId = resolveTab(step.to);
+          if (tabId === null) {
             skip(step, describeUnresolved(step.to));
             break;
           }
-          await gateway.joinPane(step.paneId, windowId);
+          await gateway.movePane(step.paneId, tabId);
           applied.push(step);
           break;
         }
@@ -450,32 +445,9 @@ export async function applyPlan(plan: OrganizePlan, gateway: TmuxGateway): Promi
             skip(step, `pane ${step.paneId} no longer present`);
             break;
           }
-          const windowId = await gateway.breakPane(step.paneId, step.name);
-          handles.set(step.handle, windowId);
-          liveWindowIds.add(windowId);
-          applied.push(step);
-          break;
-        }
-        case "swap-pane": {
-          if (!livePaneIds.has(step.a)) {
-            skip(step, `pane ${step.a} no longer present`);
-            break;
-          }
-          if (!livePaneIds.has(step.b)) {
-            skip(step, `pane ${step.b} no longer present`);
-            break;
-          }
-          await gateway.swapPane(step.a, step.b);
-          applied.push(step);
-          break;
-        }
-        case "select-layout": {
-          const windowId = resolveWindow(step.window);
-          if (windowId === null) {
-            skip(step, describeUnresolved(step.window));
-            break;
-          }
-          await gateway.selectLayout(windowId, step.layout);
+          const tabId = await gateway.breakPane(step.paneId, step.name);
+          handles.set(step.handle, tabId);
+          liveTabIds.add(tabId);
           applied.push(step);
           break;
         }

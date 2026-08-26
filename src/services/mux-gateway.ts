@@ -30,6 +30,7 @@ export class FakeMuxGateway implements MuxGateway {
   readonly sent: Array<{ paneId: string; keys: string }> = [];
   readonly spawned: Array<{ paneId: string; tabId: string; opts: SpawnOpts }> = [];
   readonly closed: Array<{ kind: "pane" | "tab"; id: string }> = [];
+  readonly createdTabs: Array<{ tabId: string; name: string }> = [];
   readonly renamed: Array<{ tabId: string; name: string }> = [];
   readonly moved: Array<{ srcPane: string; dstTab: string }> = [];
   readonly broken: Array<{ pane: string; tabId: string; name?: string }> = [];
@@ -91,11 +92,13 @@ export class FakeMuxGateway implements MuxGateway {
       tabId = opts.tab.tabId;
       if (!this.tabs.has(tabId)) {
         this.tabs.set(tabId, { name: tabId, paneIds: [] });
+        this.createdTabs.push({ tabId, name: tabId });
       }
     } else {
       tabId = this.mintTabId();
       const name = opts.tab?.mode === "new" ? opts.tab.name : tabId;
       this.tabs.set(tabId, { name, paneIds: [] });
+      this.createdTabs.push({ tabId, name });
     }
 
     const paneId = this.mintPaneId();
@@ -161,6 +164,7 @@ export class FakeMuxGateway implements MuxGateway {
   async newTab(name: string): Promise<string> {
     const tabId = this.mintTabId();
     this.tabs.set(tabId, { name, paneIds: [] });
+    this.createdTabs.push({ tabId, name });
     return tabId;
   }
 

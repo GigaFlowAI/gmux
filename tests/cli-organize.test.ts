@@ -11,14 +11,14 @@ import { describe, expect, it } from "vitest";
 import type { OrganizePlan } from "../src/core/organize-types.js";
 import { renderOrganizePreview } from "../src/cli/commands/organize.js";
 
-const emptyPlan: OrganizePlan = { summary: "0 project window(s), 0 pane(s) moved", steps: [] };
+const emptyPlan: OrganizePlan = { schemaVersion: 2, summary: "0 project tab(s), 0 pane(s) moved", steps: [] };
 
 const plan: OrganizePlan = {
-  summary: "2 project window(s), 1 pane(s) moved",
+  schemaVersion: 2,
+  summary: "2 project tab(s), 1 pane(s) moved",
   steps: [
-    { op: "rename-window", window: { kind: "window", windowId: "@1" }, name: "alpha", description: 'Rename window to "alpha"' },
-    { op: "move-pane", paneId: "%3", to: { kind: "window", windowId: "@1" }, description: 'Move %3 (writing tests) → "alpha"' },
-    { op: "select-layout", window: { kind: "window", windowId: "@1" }, layout: "tiled", description: 'Tile "alpha"' },
+    { op: "rename-tab", tab: { kind: "tab", tabId: "t_1" }, name: "alpha", description: 'Rename tab to "alpha"' },
+    { op: "move-pane", paneId: "p_3", to: { kind: "tab", tabId: "t_1" }, description: 'Move p_3 (writing tests) → "alpha"' },
   ],
 };
 
@@ -27,9 +27,8 @@ describe("renderOrganizePreview", () => {
     const text = renderOrganizePreview(plan);
     const lines = text.split("\n");
     expect(lines[0]).toBe(plan.summary);
-    expect(lines[1]).toContain('1. Rename window to "alpha"');
-    expect(lines[2]).toContain('2. Move %3 (writing tests) → "alpha"');
-    expect(lines[3]).toContain('3. Tile "alpha"');
+    expect(lines[1]).toContain('1. Rename tab to "alpha"');
+    expect(lines[2]).toContain('2. Move p_3 (writing tests) → "alpha"');
   });
 
   it("ends with a hint to pass --apply", () => {

@@ -11,8 +11,8 @@ import { buildAskContext, buildAskPrompt, defaultAskProvider } from "../../servi
 import { classifyIntent } from "../../services/ask-router.js";
 import { mapLimit } from "../../services/concurrency.js";
 import { readSnapshotFile, subscribe } from "../../services/daemon-client.js";
+import { MuxClient } from "../../services/mux-client.js";
 import { HeuristicOrganizePlanner, LlmOrganizePlanner, applyPlan } from "../../services/organize.js";
-import { RealTmuxGateway } from "../../services/tmux-gateway.js";
 import { attachSummaries, loadCachedRecords } from "../../services/views.js";
 import { buildWorkViews, defaultWorkViewProvider } from "../../services/work-view.js";
 import { renderCockpit, type CockpitAsk, type RenderCockpitOptions } from "../gmux-render.js";
@@ -239,7 +239,14 @@ export function registerCockpit(program: Command): void {
                   // before its per-step loop — e.g. listPanes() — would escape;
                   // nothing was applied at that point, so a clean close is safe.
                   try {
-                    if (plan) await applyPlan(plan, new RealTmuxGateway());
+                    if (plan) {
+                      const client = await MuxClient.connectCli();
+                      try {
+                        await applyPlan(plan, client);
+                      } finally {
+                        await client.close().catch(() => {});
+                      }
+                    }
                   } catch (error) {
                     process.stderr.write(`gmux: organize apply failed — ${(error as Error).message}\n`);
                   }

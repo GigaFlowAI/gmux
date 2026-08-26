@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
+use serde_json::Value;
 use tokio::sync::broadcast;
 
 use crate::grid::GridSnapshot;
@@ -670,6 +671,190 @@ impl Mux {
         }
     }
 
+    pub fn new_tab(&mut self, name: &str, workspace_id: Option<&str>) -> Result<String, MuxError> {
+        let ws_id = match workspace_id {
+            Some(id) if self.workspaces.contains_key(id) => id.to_string(),
+            _ => self
+                .workspaces
+                .keys()
+                .next()
+                .cloned()
+                .ok_or_else(|| {
+                    MuxError::rpc(
+                        "not_found",
+                        "no workspace to create a tab in",
+                        "Attach a TUI or spawn a pane first",
+                    )
+                })?,
+        };
+        let tab_id = new_id("t_");
+        if let Some(ws) = self.workspaces.get_mut(&ws_id) {
+            ws.tabs.insert(
+                tab_id.clone(),
+                Tab {
+                    id: tab_id.clone(),
+                    name: name.to_string(),
+                    pane_ids: Vec::new(),
+                },
+            );
+        }
+        self.emit(
+            "tab.created",
+            serde_json::json!({
+                "tabId": tab_id,
+                "name": name,
+                "workspaceId": ws_id,
+            }),
+        );
+        Ok(tab_id)
+    }
+
+    pub fn rename_tab(&mut self, tab_id: &str, name: &str) -> Result<(), MuxError> {
+        let tab = self
+            .workspaces
+            .values_mut()
+            .find_map(|ws| ws.tabs.get_mut(tab_id))
+            .ok_or_else(|| {
+                MuxError::rpc(
+                    "not_found",
+                    &format!("tab {tab_id} not found"),
+                    "Run gmux snapshot --json",
+                )
+            })?;
+        tab.name = name.to_string();
+        Ok(())
+    }
+
+    pub fn move_pane(&mut self, src_pane: &str, dst_tab: &str) -> Result<(), MuxError> {
+        let pane = self.panes.get(src_pane).ok_or_else(|| pane_missing(src_pane))?;
+        let from_tab = pane.tab_id.clone();
+        let from_ws = pane.workspace_id.clone();
+        let dst_ws = self
+            .workspaces
+            .iter()
+            .find_map(|(ws_id, ws)| ws.tabs.contains_key(dst_tab).then(|| ws_id.clone()))
+            .ok_or_else(|| {
+                MuxError::rpc(
+                    "not_found",
+                    &format!("tab {dst_tab} not found"),
+                    "Run gmux snapshot --json",
+                )
+            })?;
+
+        if let Some(ws) = self.workspaces.get_mut(&from_ws) {
+            if let Some(tab) = ws.tabs.get_mut(&from_tab) {
+                tab.pane_ids.retain(|id| id != src_pane);
+            }
+        }
+        if let Some(ws) = self.workspaces.get_mut(&dst_ws) {
+            if let Some(tab) = ws.tabs.get_mut(dst_tab) {
+                if !tab.pane_ids.iter().any(|id| id == src_pane) {
+                    tab.pane_ids.push(src_pane.to_string());
+                }
+            }
+        }
+        if let Some(pane) = self.panes.get_mut(src_pane) {
+            pane.tab_id = dst_tab.to_string();
+            pane.workspace_id = dst_ws;
+        }
+        Ok(())
+    }
+
+    pub fn break_pane(&mut self, pane_id: &str, name: Option<&str>) -> Result<String, MuxError> {
+        let workspace_id = self
+            .panes
+            .get(pane_id)
+            .ok_or_else(|| pane_missing(pane_id))?
+            .workspace_id
+            .clone();
+        let tab_id = self.new_tab(name.unwrap_or("broken"), Some(&workspace_id))?;
+        self.move_pane(pane_id, &tab_id)?;
+        Ok(tab_id)
+    }
+
+    /// Apply a v2 grouping plan. Unknown ops and v1 plans are skipped, never kill.
+    pub fn apply_organize_plan(
+        &mut self,
+        plan: &serde_json::Value,
+    ) -> Result<serde_json::Value, MuxError> {
+        let version = plan.get("schemaVersion").and_then(Value::as_u64).unwrap_or(0);
+        let steps = plan
+            .get("steps")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut applied = Vec::new();
+        let mut skipped = Vec::new();
+        if version != 2 {
+            for step in steps {
+                skipped.push(serde_json::json!({
+                    "step": step,
+                    "reason": format!("schemaVersion {version} is not applied to mux (need 2)"),
+                }));
+            }
+            return Ok(serde_json::json!({ "applied": applied, "skipped": skipped }));
+        }
+        let mut handles: HashMap<String, String> = HashMap::new();
+        for step in steps {
+            let op = step.get("op").and_then(Value::as_str).unwrap_or("");
+            let result = match op {
+                "new-tab" => {
+                    let handle = step.get("handle").and_then(Value::as_str).unwrap_or("");
+                    let name = step.get("name").and_then(Value::as_str).unwrap_or("tab");
+                    match self.new_tab(name, None) {
+                        Ok(tab_id) => {
+                            if !handle.is_empty() {
+                                handles.insert(handle.to_string(), tab_id);
+                            }
+                            Ok(())
+                        }
+                        Err(err) => Err(err.message()),
+                    }
+                }
+                "rename-tab" => {
+                    match resolve_tab_target(step.get("tab"), &handles) {
+                        Some(tab_id) => self
+                            .rename_tab(
+                                &tab_id,
+                                step.get("name").and_then(Value::as_str).unwrap_or(""),
+                            )
+                            .map_err(|e| e.message()),
+                        None => Err("unbound tab target".into()),
+                    }
+                }
+                "move-pane" => {
+                    let pane_id = step.get("paneId").and_then(Value::as_str).unwrap_or("");
+                    match resolve_tab_target(step.get("to"), &handles) {
+                        Some(tab_id) => self
+                            .move_pane(pane_id, &tab_id)
+                            .map_err(|e| e.message()),
+                        None => Err("unbound tab target".into()),
+                    }
+                }
+                "break-pane" => {
+                    let pane_id = step.get("paneId").and_then(Value::as_str).unwrap_or("");
+                    let handle = step.get("handle").and_then(Value::as_str).unwrap_or("");
+                    let name = step.get("name").and_then(Value::as_str);
+                    match self.break_pane(pane_id, name) {
+                        Ok(tab_id) => {
+                            if !handle.is_empty() {
+                                handles.insert(handle.to_string(), tab_id);
+                            }
+                            Ok(())
+                        }
+                        Err(err) => Err(err.message()),
+                    }
+                }
+                other => Err(format!("unknown op {other}")),
+            };
+            match result {
+                Ok(()) => applied.push(step),
+                Err(reason) => skipped.push(serde_json::json!({ "step": step, "reason": reason })),
+            }
+        }
+        Ok(serde_json::json!({ "applied": applied, "skipped": skipped }))
+    }
+
     pub fn close_tab(&mut self, tab_id: &str) -> Result<(), MuxError> {
         let pane_ids: Vec<String> = self
             .workspaces
@@ -741,6 +926,24 @@ impl Drop for Mux {
         for pane in self.panes.values_mut() {
             pane.kill();
         }
+    }
+}
+
+fn resolve_tab_target(
+    target: Option<&Value>,
+    handles: &HashMap<String, String>,
+) -> Option<String> {
+    let target = target?;
+    match target.get("kind").and_then(Value::as_str)? {
+        "tab" => target
+            .get("tabId")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        "handle" => target
+            .get("handle")
+            .and_then(Value::as_str)
+            .and_then(|h| handles.get(h).cloned()),
+        _ => None,
     }
 }
 

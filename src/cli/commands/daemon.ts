@@ -26,7 +26,7 @@ import {
 } from "../../services/daemon-lock.js";
 import { ModelServer } from "../../services/daemon-socket.js";
 import { Guardian } from "../../services/guardian.js";
-import { MuxClient } from "../../services/mux-client.js";
+import { MuxClient, liveIntelHandlers } from "../../services/mux-client.js";
 import type { MuxGateway } from "../../services/mux-gateway.js";
 import { ResourceMonitor } from "../../services/resources.js";
 import { defaultLabelProvider, type LabelProvider, SemanticWorker } from "../../services/semantic.js";
@@ -179,7 +179,7 @@ export {
 // --- Command ------------------------------------------------------------
 
 async function runSidecarForeground(): Promise<void> {
-  const client = await MuxClient.connect();
+  const client = await MuxClient.connect(undefined, undefined, liveIntelHandlers());
   const config = await readConfig();
   const gmuxCfg = resolveGmuxConfig(config);
   const provider = await defaultLabelProvider();

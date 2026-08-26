@@ -38,7 +38,7 @@ export interface ClassifyDeps {
 export function buildClassifyPrompt(prompt: string): string {
   return [
     "Classify the user's message. Reply with exactly one word and nothing else:",
-    "ORGANIZE if it asks to rearrange/reorganize the tmux workspace layout (windows, panes, tiling, grouping, moving panes),",
+    "ORGANIZE if it asks to rearrange/reorganize the gmux workspace (tabs, panes, grouping, moving panes),",
     "or ASK if it is a question or instruction for the running agents.",
     "",
     `Message: ${prompt}`,

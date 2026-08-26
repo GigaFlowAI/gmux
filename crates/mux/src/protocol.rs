@@ -68,9 +68,8 @@ impl IntelHub {
         }
     }
 
-    /// Mux-originated RPC. Unused by peel (fast path). Timeouts: extract 20ms,
-    /// pack 500ms, classify 30s, organize 120s.
-    #[allow(dead_code)]
+    /// Mux-originated RPC. Peel does not use this (fast path). Timeouts:
+    /// extract 20ms, pack 500ms, classify 30s, organize 120s.
     async fn call(
         &self,
         method: &str,
@@ -596,6 +595,46 @@ async fn dispatch(
                 Err(err) => err_of(&req.id, &err),
             }
         }),
+        "tab.new" => gated(conn, req, "tab.new", |_| {
+            let name = req.params.get("name").and_then(Value::as_str).unwrap_or("tab");
+            let workspace_id = req.params.get("workspaceId").and_then(Value::as_str);
+            match mux.lock().expect("mux").new_tab(name, workspace_id) {
+                Ok(tab_id) => ok(&req.id, json!({ "tabId": tab_id })),
+                Err(err) => err_of(&req.id, &err),
+            }
+        }),
+        "tab.rename" => gated(conn, req, "tab.rename", |_| {
+            let tab_id = req.params.get("tabId").and_then(Value::as_str).unwrap_or("");
+            let name = req.params.get("name").and_then(Value::as_str).unwrap_or("");
+            match mux.lock().expect("mux").rename_tab(tab_id, name) {
+                Ok(()) => ok(&req.id, json!({ "ok": true })),
+                Err(err) => err_of(&req.id, &err),
+            }
+        }),
+        "pane.move" => gated(conn, req, "pane.move", |_| {
+            let src = req.params.get("srcPane").and_then(Value::as_str).unwrap_or("");
+            let dst = req.params.get("dstTab").and_then(Value::as_str).unwrap_or("");
+            match mux.lock().expect("mux").move_pane(src, dst) {
+                Ok(()) => ok(&req.id, json!({ "ok": true })),
+                Err(err) => err_of(&req.id, &err),
+            }
+        }),
+        "pane.break" => gated(conn, req, "pane.break", |_| {
+            let pane = req.params.get("pane").and_then(Value::as_str).unwrap_or("");
+            let name = req.params.get("name").and_then(Value::as_str);
+            match mux.lock().expect("mux").break_pane(pane, name) {
+                Ok(tab_id) => ok(&req.id, json!({ "tabId": tab_id })),
+                Err(err) => err_of(&req.id, &err),
+            }
+        }),
+        "prompt.submit" => handle_prompt_submit(mux, hub, conn, req).await,
+        "organize.apply" => gated(conn, req, "organize.apply", |_| {
+            let plan = req.params.get("plan").cloned().unwrap_or(Value::Null);
+            match mux.lock().expect("mux").apply_organize_plan(&plan) {
+                Ok(result) => ok(&req.id, result),
+                Err(err) => err_of(&req.id, &err),
+            }
+        }),
         "pane.report_semantics" => gated(conn, req, "pane.report_semantics", |_| {
             let pane_id = req
                 .params
@@ -634,7 +673,7 @@ async fn dispatch(
             &req.id,
             "unknown_method",
             &format!("unknown method {other}"),
-            "Supported: ping, session.snapshot, pane.list, pane.spawn, pane.send_keys, pane.close, pane.read, tab.close, peel, events.subscribe, hello, client.attach, client.focus, pane.report_semantics",
+            "Supported: ping, session.snapshot, pane.list, pane.spawn, pane.send_keys, pane.close, pane.read, tab.new, tab.rename, tab.close, pane.move, pane.break, prompt.submit, organize.apply, peel, events.subscribe, hello, client.attach, client.focus, pane.report_semantics",
         ),
     }
 }
@@ -803,6 +842,103 @@ async fn handle_attach(mux: &Arc<Mutex<Mux>>, conn: &mut Conn, req: &Request) ->
     )
 }
 
+async fn handle_prompt_submit(
+    mux: &Arc<Mutex<Mux>>,
+    hub: &Arc<IntelHub>,
+    conn: &Conn,
+    req: &Request,
+) -> Value {
+    match &conn.class {
+        Err(message) => {
+            return error(
+                &req.id,
+                "permission_denied",
+                message,
+                "A descendant of a pane pid is always pane — unsetting GMUX_PANE_ID is permission_denied, never cli",
+            );
+        }
+        Ok(class) if !allowed(*class, "prompt.submit") => {
+            return error(
+                &req.id,
+                "permission_denied",
+                &format!("{class:?} may not call prompt.submit"),
+                "Type in the gmux sidebar prompt, or run `gmux organize`",
+            );
+        }
+        Ok(_) => {}
+    }
+    let prompt = req
+        .params
+        .get("prompt")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    if prompt.trim().is_empty() {
+        return ok(&req.id, json!({ "intent": "ask" }));
+    }
+    let classified = match hub
+        .call(
+            "classify.intent",
+            json!({ "prompt": prompt }),
+            CLASSIFY_TIMEOUT,
+        )
+        .await
+    {
+        Ok(v) => v
+            .get("intent")
+            .and_then(Value::as_str)
+            .unwrap_or("ask")
+            .to_string(),
+        Err(_) => "ask".to_string(), // intel down / timeout → never regroup unattended
+    };
+    if classified != "organize" {
+        return ok(&req.id, json!({ "intent": "ask" }));
+    }
+    let panes = {
+        let guard = mux.lock().expect("mux");
+        organize_panes_from_snapshot(&guard.snapshot())
+    };
+    match hub
+        .call(
+            "organize.plan",
+            json!({ "prompt": prompt, "panes": panes }),
+            ORGANIZE_TIMEOUT,
+        )
+        .await
+    {
+        Ok(plan) => ok(&req.id, json!({ "intent": "organize", "plan": plan })),
+        Err(err) => err_of(&req.id, &err),
+    }
+}
+
+fn organize_panes_from_snapshot(snap: &Value) -> Vec<Value> {
+    snap.get("panes")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .map(|p| {
+                    let argv = p.get("argv").and_then(Value::as_array);
+                    let command = argv
+                        .and_then(|a| a.first())
+                        .and_then(Value::as_str)
+                        .and_then(|s| std::path::Path::new(s).file_name()?.to_str())
+                        .unwrap_or("");
+                    json!({
+                        "paneId": p.get("paneId"),
+                        "tabId": p.get("tabId"),
+                        "cwd": p.get("cwd"),
+                        "command": command,
+                        "harness": p.get("harness"),
+                        "state": p.get("state"),
+                        "label": p.get("semantics").and_then(|s| s.get("label")),
+                        "active": false,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn spawn_params(req: &Request, conn: &Conn) -> Result<SpawnOpts, MuxError> {
     let cwd = req
         .params
@@ -933,9 +1069,15 @@ mod tests {
     #[test]
     fn intel_may_not_send_keys() {
         assert!(!allowed(CallerClass::Intel, "pane.send_keys"));
+        assert!(!allowed(CallerClass::Intel, "prompt.submit"));
+        assert!(!allowed(CallerClass::Intel, "organize.apply"));
+        assert!(!allowed(CallerClass::Intel, "tab.new"));
         assert!(allowed(CallerClass::Intel, "guardian.broadcast"));
         assert!(allowed(CallerClass::Intel, "pane.report_semantics"));
         assert!(allowed(CallerClass::Cli, "pane.send_keys"));
+        assert!(allowed(CallerClass::Cli, "prompt.submit"));
+        assert!(allowed(CallerClass::Tui, "organize.apply"));
+        assert!(allowed(CallerClass::Tui, "tab.new"));
         assert!(allowed(CallerClass::Tui, "pane.send_keys"));
     }
 

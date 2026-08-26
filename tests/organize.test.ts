@@ -2,7 +2,7 @@
  * `gmux organize`: the heuristic planner, the LLM planner's reply parsing +
  * defensive fallback, and `applyPlan`'s executor.
  *
- * No real tmux, no real LLM — non-negotiables #2 and #3. The "LLM" tests spawn
+ * No real mux, no real LLM — non-negotiables #2 and #3. The "LLM" tests spawn
  * a `node -e` script as the provider argv (same trick `provider-process.test.ts`
  * uses): deterministic, no model, no network.
  */
@@ -10,17 +10,19 @@
 import { describe, expect, it } from "vitest";
 
 import type { OrganizePane, OrganizePlan } from "../src/core/organize-types.js";
+import { ORGANIZE_PLAN_SCHEMA_VERSION } from "../src/core/organize-types.js";
+import { SCHEMA_VERSION } from "../src/core/types.js";
 import {
   HeuristicOrganizePlanner,
   LlmOrganizePlanner,
   applyPlan,
   parseOrganizePlan,
 } from "../src/services/organize.js";
-import { FakeTmuxGateway } from "./fixtures/fake-gateway.js";
+import { FakeMuxGateway } from "../src/services/mux-gateway.js";
 
 function pane(overrides: Partial<OrganizePane> & { paneId: string }): OrganizePane {
   return {
-    windowId: null,
+    tabId: null,
     cwd: "/x",
     command: "claude",
     harness: "claude-code",
@@ -35,136 +37,145 @@ function providerArgv(script: string): string[] {
   return [process.execPath, "-e", script];
 }
 
+describe("schema versions", () => {
+  it("keeps SCHEMA_VERSION at 1; organize plans are schemaVersion 2", () => {
+    expect(SCHEMA_VERSION).toBe(1);
+    expect(ORGANIZE_PLAN_SCHEMA_VERSION).toBe(2);
+  });
+});
+
 describe("HeuristicOrganizePlanner", () => {
-  it("groups two projects into two windows, each renamed and tiled", async () => {
+  it("v2 plan has schemaVersion 2 and no select-layout", async () => {
+    const planner = new HeuristicOrganizePlanner();
+    const plan = await planner.plan([
+      pane({ paneId: "p_A", cwd: "/r/web", harness: "claude-code" }),
+      pane({ paneId: "p_B", cwd: "/r/web", harness: "claude-code" }),
+      pane({ paneId: "p_C", cwd: "/r/bill", harness: "codex" }),
+    ]);
+    expect(plan.schemaVersion).toBe(2);
+    expect(plan.steps.some((s) => ["select-layout", "swap-pane", "new-window"].includes(s.op as string))).toBe(false);
+    expect(plan.steps.every((s) => ["new-tab", "rename-tab", "move-pane", "break-pane"].includes(s.op))).toBe(true);
+  });
+
+  it("groups two projects into two tabs, each renamed, with no tiled layout step", async () => {
     const panes: OrganizePane[] = [
-      pane({ paneId: "%1", windowId: "@1", cwd: "/repo/alpha", label: "fixing auth" }),
-      pane({ paneId: "%2", windowId: "@2", cwd: "/repo/alpha", label: "writing tests" }),
-      pane({ paneId: "%3", windowId: "@3", cwd: "/repo/beta", label: "refactor db" }),
+      pane({ paneId: "p_1", tabId: "t_1", cwd: "/repo/alpha", label: "fixing auth" }),
+      pane({ paneId: "p_2", tabId: "t_2", cwd: "/repo/alpha", label: "writing tests" }),
+      pane({ paneId: "p_3", tabId: "t_3", cwd: "/repo/beta", label: "refactor db" }),
     ];
 
     const plan = await new HeuristicOrganizePlanner().plan(panes);
 
-    expect(plan.summary).toBe("2 project window(s), 1 pane(s) moved");
+    expect(plan.schemaVersion).toBe(2);
+    expect(plan.summary).toBe("2 project tab(s), 1 pane(s) moved");
     expect(plan.steps).toEqual([
-      { op: "rename-window", window: { kind: "window", windowId: "@1" }, name: "alpha", description: 'Rename window to "alpha"' },
-      { op: "move-pane", paneId: "%2", to: { kind: "window", windowId: "@1" }, description: 'Move %2 (writing tests) → "alpha"' },
-      { op: "select-layout", window: { kind: "window", windowId: "@1" }, layout: "tiled", description: 'Tile "alpha"' },
-      { op: "rename-window", window: { kind: "window", windowId: "@3" }, name: "beta", description: 'Rename window to "beta"' },
-      { op: "select-layout", window: { kind: "window", windowId: "@3" }, layout: "tiled", description: 'Tile "beta"' },
+      { op: "rename-tab", tab: { kind: "tab", tabId: "t_1" }, name: "alpha", description: 'Rename tab to "alpha"' },
+      { op: "move-pane", paneId: "p_2", to: { kind: "tab", tabId: "t_1" }, description: 'Move p_2 (writing tests) → "alpha"' },
+      { op: "rename-tab", tab: { kind: "tab", tabId: "t_3" }, name: "beta", description: 'Rename tab to "beta"' },
     ]);
   });
 
-  it("synthesizes a fresh window when no pane in a project group has a windowId", async () => {
-    const panes: OrganizePane[] = [pane({ paneId: "%1", windowId: null, cwd: "/repo/gamma" })];
+  it("synthesizes a fresh tab when no pane in a project group has a tabId", async () => {
+    const panes: OrganizePane[] = [pane({ paneId: "p_1", tabId: null, cwd: "/repo/gamma" })];
 
     const plan = await new HeuristicOrganizePlanner().plan(panes);
 
     expect(plan.steps[0]).toEqual({
-      op: "new-window",
-      handle: "w:gamma",
+      op: "new-tab",
+      handle: "t:gamma",
       name: "gamma",
-      description: 'Create window "gamma"',
+      description: 'Create tab "gamma"',
     });
-    // No rename-window: the freshly created window is already named correctly.
-    expect(plan.steps.some((s) => s.op === "rename-window")).toBe(false);
+    expect(plan.steps.some((s) => s.op === "rename-tab")).toBe(false);
     expect(plan.steps).toEqual([
-      { op: "new-window", handle: "w:gamma", name: "gamma", description: 'Create window "gamma"' },
-      { op: "move-pane", paneId: "%1", to: { kind: "handle", handle: "w:gamma" }, description: 'Move %1 (claude) → "gamma"' },
-      { op: "select-layout", window: { kind: "handle", handle: "w:gamma" }, layout: "tiled", description: 'Tile "gamma"' },
+      { op: "new-tab", handle: "t:gamma", name: "gamma", description: 'Create tab "gamma"' },
+      { op: "move-pane", paneId: "p_1", to: { kind: "handle", handle: "t:gamma" }, description: 'Move p_1 (claude) → "gamma"' },
     ]);
   });
 
-  it("gathers two or more idle shells into one shells window, even-vertical", async () => {
+  it("gathers two or more idle shells into one shells tab", async () => {
     const panes: OrganizePane[] = [
-      pane({ paneId: "%1", windowId: "@1", cwd: "/repo/alpha" }),
-      pane({ paneId: "%9", windowId: "@9", cwd: "/x", command: "zsh", harness: null, state: "idle" }),
-      pane({ paneId: "%8", windowId: "@8", cwd: "/x", command: "-bash", harness: null, state: null }),
+      pane({ paneId: "p_1", tabId: "t_1", cwd: "/repo/alpha" }),
+      pane({ paneId: "p_9", tabId: "t_9", cwd: "/x", command: "zsh", harness: null, state: "idle" }),
+      pane({ paneId: "p_8", tabId: "t_8", cwd: "/x", command: "-bash", harness: null, state: null }),
     ];
 
     const plan = await new HeuristicOrganizePlanner().plan(panes);
 
     expect(plan.steps).toContainEqual({
-      op: "new-window",
-      handle: "w:shells",
+      op: "new-tab",
+      handle: "t:shells",
       name: "shells",
-      description: 'Create window "shells"',
-    });
-    // Deterministic paneId order within the shells group: %8 before %9.
-    expect(plan.steps).toContainEqual({
-      op: "move-pane",
-      paneId: "%8",
-      to: { kind: "handle", handle: "w:shells" },
-      description: 'Move %8 (-bash) → "shells"',
+      description: 'Create tab "shells"',
     });
     expect(plan.steps).toContainEqual({
       op: "move-pane",
-      paneId: "%9",
-      to: { kind: "handle", handle: "w:shells" },
-      description: 'Move %9 (zsh) → "shells"',
+      paneId: "p_8",
+      to: { kind: "handle", handle: "t:shells" },
+      description: 'Move p_8 (-bash) → "shells"',
     });
     expect(plan.steps).toContainEqual({
-      op: "select-layout",
-      window: { kind: "handle", handle: "w:shells" },
-      layout: "even-vertical",
-      description: 'Arrange "shells"',
+      op: "move-pane",
+      paneId: "p_9",
+      to: { kind: "handle", handle: "t:shells" },
+      description: 'Move p_9 (zsh) → "shells"',
     });
+    expect(plan.steps.some((s) => (s.op as string) === "select-layout")).toBe(false);
   });
 
-  it("emits nothing for a lone idle shell — not worth its own window", async () => {
+  it("emits nothing for a lone idle shell — not worth its own tab", async () => {
     const panes: OrganizePane[] = [
-      pane({ paneId: "%1", windowId: "@1", cwd: "/repo/alpha" }),
-      pane({ paneId: "%9", windowId: "@9", cwd: "/x", command: "zsh", harness: null, state: "idle" }),
+      pane({ paneId: "p_1", tabId: "t_1", cwd: "/repo/alpha" }),
+      pane({ paneId: "p_9", tabId: "t_9", cwd: "/x", command: "zsh", harness: null, state: "idle" }),
     ];
 
     const plan = await new HeuristicOrganizePlanner().plan(panes);
 
-    expect(plan.steps.some((s) => s.op === "move-pane" && s.paneId === "%9")).toBe(false);
-    expect(plan.steps.some((s) => s.op === "new-window" && s.name === "shells")).toBe(false);
+    expect(plan.steps.some((s) => s.op === "move-pane" && s.paneId === "p_9")).toBe(false);
+    expect(plan.steps.some((s) => s.op === "new-tab" && s.name === "shells")).toBe(false);
   });
 
-  it("skips a redundant move when panes are already grouped in the anchor window", async () => {
+  it("skips a redundant move when panes are already grouped in the anchor tab", async () => {
     const panes: OrganizePane[] = [
-      pane({ paneId: "%1", windowId: "@1", cwd: "/repo/alpha" }),
-      pane({ paneId: "%2", windowId: "@1", cwd: "/repo/alpha" }), // already in @1 with %1
+      pane({ paneId: "p_1", tabId: "t_1", cwd: "/repo/alpha" }),
+      pane({ paneId: "p_2", tabId: "t_1", cwd: "/repo/alpha" }),
     ];
 
     const plan = await new HeuristicOrganizePlanner().plan(panes);
 
     expect(plan.steps.some((s) => s.op === "move-pane")).toBe(false);
-    expect(plan.summary).toBe("1 project window(s), 0 pane(s) moved");
+    expect(plan.summary).toBe("1 project tab(s), 0 pane(s) moved");
   });
 
   it("treats a bare shell mid-'working' as agent-class, never sweeping it into shells", async () => {
     const panes: OrganizePane[] = [
-      pane({ paneId: "%1", windowId: "@1", cwd: "/repo/alpha", command: "zsh", harness: null, state: "working" }),
+      pane({ paneId: "p_1", tabId: "t_1", cwd: "/repo/alpha", command: "zsh", harness: null, state: "working" }),
     ];
 
     const plan = await new HeuristicOrganizePlanner().plan(panes);
 
-    // Grouped as project "alpha", not swept into a shells window.
-    expect(plan.steps.some((s) => s.op === "new-window" && s.name === "shells")).toBe(false);
-    expect(plan.steps.some((s) => s.op === "rename-window" && s.name === "alpha")).toBe(true);
+    expect(plan.steps.some((s) => s.op === "new-tab" && s.name === "shells")).toBe(false);
+    expect(plan.steps.some((s) => s.op === "rename-tab" && s.name === "alpha")).toBe(true);
   });
 
   it("never emits a destructive op — the union has none to emit", async () => {
     const panes: OrganizePane[] = [
-      pane({ paneId: "%1", windowId: "@1", cwd: "/repo/alpha" }),
-      pane({ paneId: "%2", windowId: "@2", cwd: "/repo/beta" }),
-      pane({ paneId: "%9", windowId: "@9", cwd: "/x", command: "zsh", harness: null, state: "idle" }),
-      pane({ paneId: "%8", windowId: "@8", cwd: "/x", command: "bash", harness: null, state: "idle" }),
+      pane({ paneId: "p_1", tabId: "t_1", cwd: "/repo/alpha" }),
+      pane({ paneId: "p_2", tabId: "t_2", cwd: "/repo/beta" }),
+      pane({ paneId: "p_9", tabId: "t_9", cwd: "/x", command: "zsh", harness: null, state: "idle" }),
+      pane({ paneId: "p_8", tabId: "t_8", cwd: "/x", command: "bash", harness: null, state: "idle" }),
     ];
     const plan = await new HeuristicOrganizePlanner().plan(panes);
-    const allowedOps = new Set(["new-window", "rename-window", "move-pane", "break-pane", "swap-pane", "select-layout"]);
+    const allowedOps = new Set(["new-tab", "rename-tab", "move-pane", "break-pane"]);
     for (const step of plan.steps) expect(allowedOps.has(step.op)).toBe(true);
   });
 
   it("is a pure function of its input: identical calls produce identical plans", async () => {
     const panes: OrganizePane[] = [
-      pane({ paneId: "%2", windowId: "@2", cwd: "/repo/beta" }),
-      pane({ paneId: "%1", windowId: "@1", cwd: "/repo/alpha" }),
-      pane({ paneId: "%9", windowId: null, cwd: "/x", command: "fish", harness: null, state: "idle" }),
-      pane({ paneId: "%8", windowId: null, cwd: "/x", command: "sh", harness: null, state: "idle" }),
+      pane({ paneId: "p_2", tabId: "t_2", cwd: "/repo/beta" }),
+      pane({ paneId: "p_1", tabId: "t_1", cwd: "/repo/alpha" }),
+      pane({ paneId: "p_9", tabId: null, cwd: "/x", command: "fish", harness: null, state: "idle" }),
+      pane({ paneId: "p_8", tabId: null, cwd: "/x", command: "sh", harness: null, state: "idle" }),
     ];
     const planner = new HeuristicOrganizePlanner();
     const first = await planner.plan([...panes]);
@@ -174,120 +185,123 @@ describe("HeuristicOrganizePlanner", () => {
 
   it("never references a pane id absent from the input, and binds every handle before use", async () => {
     const panes: OrganizePane[] = [
-      pane({ paneId: "%1", windowId: null, cwd: "/repo/alpha" }),
-      pane({ paneId: "%2", windowId: null, cwd: "/repo/alpha" }),
+      pane({ paneId: "p_1", tabId: null, cwd: "/repo/alpha" }),
+      pane({ paneId: "p_2", tabId: null, cwd: "/repo/alpha" }),
     ];
     const plan = await new HeuristicOrganizePlanner().plan(panes);
     const paneIds = new Set(panes.map((p) => p.paneId));
     const bound = new Set<string>();
     for (const step of plan.steps) {
-      if (step.op === "new-window" || step.op === "break-pane") bound.add(step.handle);
+      if (step.op === "new-tab" || step.op === "break-pane") bound.add(step.handle);
       if (step.op === "move-pane") {
         expect(paneIds.has(step.paneId)).toBe(true);
         if (step.to.kind === "handle") expect(bound.has(step.to.handle)).toBe(true);
       }
-      if ((step.op === "rename-window" || step.op === "select-layout") && step.window.kind === "handle") {
-        expect(bound.has(step.window.handle)).toBe(true);
+      if (step.op === "rename-tab" && step.tab.kind === "handle") {
+        expect(bound.has(step.tab.handle)).toBe(true);
       }
     }
   });
 });
 
 describe("parseOrganizePlan", () => {
-  const panes: OrganizePane[] = [pane({ paneId: "%1" }), pane({ paneId: "%2" })];
+  const panes: OrganizePane[] = [pane({ paneId: "p_1" }), pane({ paneId: "p_2" })];
 
   it("parses a bare JSON object", () => {
-    const raw = '{"summary":"one move","steps":[{"op":"move-pane","paneId":"%1","to":{"kind":"window","windowId":"@1"},"description":"move it"}]}';
+    const raw = '{"summary":"one move","steps":[{"op":"move-pane","paneId":"p_1","to":{"kind":"tab","tabId":"t_1"},"description":"move it"}]}';
     const plan = parseOrganizePlan(raw, panes);
+    expect(plan.schemaVersion).toBe(2);
     expect(plan.summary).toBe("one move");
     expect(plan.steps).toEqual([
-      { op: "move-pane", paneId: "%1", to: { kind: "window", windowId: "@1" }, description: "move it" },
+      { op: "move-pane", paneId: "p_1", to: { kind: "tab", tabId: "t_1" }, description: "move it" },
     ]);
   });
 
   it("takes the outermost braces from a fenced reply", () => {
     const raw = '```json\n{"summary":"s","steps":[]}\n```';
-    expect(parseOrganizePlan(raw, panes)).toEqual({ summary: "s", steps: [] });
+    expect(parseOrganizePlan(raw, panes)).toEqual({ schemaVersion: 2, summary: "s", steps: [] });
   });
 
   it("takes the outermost braces from a prefaced reply", () => {
     const raw = 'Sure, here is the plan:\n{"summary":"s","steps":[]}\nLet me know if you want changes.';
-    expect(parseOrganizePlan(raw, panes)).toEqual({ summary: "s", steps: [] });
+    expect(parseOrganizePlan(raw, panes)).toEqual({ schemaVersion: 2, summary: "s", steps: [] });
   });
 
   it("drops a step with an unknown op", () => {
-    const raw = '{"steps":[{"op":"kill-pane","paneId":"%1","description":"x"}]}';
+    const raw = '{"steps":[{"op":"kill-pane","paneId":"p_1","description":"x"}]}';
+    expect(parseOrganizePlan(raw, panes).steps).toEqual([]);
+  });
+
+  it("drops select-layout, swap-pane, and new-window as unknown ops", () => {
+    const raw =
+      '{"steps":[' +
+      '{"op":"select-layout","window":{"kind":"window","windowId":"@1"},"layout":"tiled","description":"x"},' +
+      '{"op":"swap-pane","a":"p_1","b":"p_2","description":"x"},' +
+      '{"op":"new-window","handle":"w:x","name":"x","description":"x"}' +
+      "]}";
     expect(parseOrganizePlan(raw, panes).steps).toEqual([]);
   });
 
   it("drops a step referencing a pane id absent from the input", () => {
-    const raw = '{"steps":[{"op":"move-pane","paneId":"%999","to":{"kind":"window","windowId":"@1"},"description":"x"}]}';
+    const raw = '{"steps":[{"op":"move-pane","paneId":"p_999","to":{"kind":"tab","tabId":"t_1"},"description":"x"}]}';
     expect(parseOrganizePlan(raw, panes).steps).toEqual([]);
   });
 
   it("drops a step referencing a handle never bound by an earlier step", () => {
-    const raw = '{"steps":[{"op":"move-pane","paneId":"%1","to":{"kind":"handle","handle":"w:ghost"},"description":"x"}]}';
+    const raw = '{"steps":[{"op":"move-pane","paneId":"p_1","to":{"kind":"handle","handle":"t:ghost"},"description":"x"}]}';
     expect(parseOrganizePlan(raw, panes).steps).toEqual([]);
   });
 
   it("accepts a handle bound by an earlier step in the same reply", () => {
     const raw =
       '{"steps":[' +
-      '{"op":"new-window","handle":"w:x","name":"x","description":"create"},' +
-      '{"op":"move-pane","paneId":"%1","to":{"kind":"handle","handle":"w:x"},"description":"move"}' +
+      '{"op":"new-tab","handle":"t:x","name":"x","description":"create"},' +
+      '{"op":"move-pane","paneId":"p_1","to":{"kind":"handle","handle":"t:x"},"description":"move"}' +
       "]}";
     expect(parseOrganizePlan(raw, panes).steps).toHaveLength(2);
   });
 
-  it("drops a select-layout step with an invalid layout name", () => {
-    const raw = '{"steps":[{"op":"select-layout","window":{"kind":"window","windowId":"@1"},"layout":"spiral","description":"x"}]}';
-    expect(parseOrganizePlan(raw, panes).steps).toEqual([]);
-  });
-
   it("returns an empty plan for garbage input", () => {
-    expect(parseOrganizePlan("not json at all", panes)).toEqual({ summary: "", steps: [] });
+    expect(parseOrganizePlan("not json at all", panes)).toEqual({ schemaVersion: 2, summary: "", steps: [] });
   });
 
   it("falls back to a computed summary when the model omits one", () => {
-    const raw = '{"steps":[{"op":"new-window","handle":"w:x","name":"x","description":"create"}]}';
+    const raw = '{"steps":[{"op":"new-tab","handle":"t:x","name":"x","description":"create"}]}';
     expect(parseOrganizePlan(raw, panes).summary).toBe("1 step(s)");
   });
 });
 
 describe("applyPlan", () => {
-  it("executes new-window, move-pane, select-layout and records them on the gateway", async () => {
-    const gw = new FakeTmuxGateway();
-    gw.setPanes([
-      { paneId: "%1", left: 0, top: 0, width: 80, height: 24, cwd: "/a", command: "claude", pid: 1, windowId: "@1", active: false },
-    ]);
+  it("executes new-tab, move-pane and records them on the gateway — no layout call", async () => {
+    const gw = new FakeMuxGateway();
+    const spawned = await gw.spawn({ cwd: "/a", argv: ["claude"], tab: { mode: "new", name: "main" } });
     const plan: OrganizePlan = {
+      schemaVersion: 2,
       summary: "s",
       steps: [
-        { op: "new-window", handle: "w:x", name: "x", description: "create" },
-        { op: "move-pane", paneId: "%1", to: { kind: "handle", handle: "w:x" }, description: "move" },
-        { op: "select-layout", window: { kind: "handle", handle: "w:x" }, layout: "tiled", description: "tile" },
+        { op: "new-tab", handle: "t:x", name: "x", description: "create" },
+        { op: "move-pane", paneId: spawned.paneId, to: { kind: "handle", handle: "t:x" }, description: "move" },
       ],
     };
 
     const result = await applyPlan(plan, gw);
 
     expect(result.skipped).toEqual([]);
-    expect(result.applied).toHaveLength(3);
-    expect(gw.created).toEqual([{ windowId: "@100", name: "x" }]);
-    expect(gw.joins).toEqual([{ srcPane: "%1", dst: "@100" }]);
-    expect(gw.layouts).toEqual([{ windowId: "@100", layout: "tiled" }]);
+    expect(result.applied).toHaveLength(2);
+    expect(gw.createdTabs.some((t) => t.name === "x")).toBe(true);
+    const dest = gw.createdTabs.find((t) => t.name === "x")!.tabId;
+    expect(gw.moved).toEqual([{ srcPane: spawned.paneId, dstTab: dest }]);
   });
 
   it("skips a move-pane for a pane that vanished, and still applies the rest", async () => {
-    const gw = new FakeTmuxGateway();
-    gw.setPanes([
-      { paneId: "%1", left: 0, top: 0, width: 80, height: 24, cwd: "/a", command: "claude", pid: 1, windowId: "@1", active: false },
-    ]);
+    const gw = new FakeMuxGateway();
+    const spawned = await gw.spawn({ cwd: "/a", argv: ["claude"], tab: { mode: "existing", tabId: "t_1" } });
     const plan: OrganizePlan = {
+      schemaVersion: 2,
       summary: "s",
       steps: [
-        { op: "move-pane", paneId: "%999", to: { kind: "window", windowId: "@1" }, description: "gone" },
-        { op: "rename-window", window: { kind: "window", windowId: "@1" }, name: "alpha", description: "rename" },
+        { op: "move-pane", paneId: "p_gone", to: { kind: "tab", tabId: spawned.tabId }, description: "gone" },
+        { op: "rename-tab", tab: { kind: "tab", tabId: spawned.tabId }, name: "alpha", description: "rename" },
       ],
     };
 
@@ -295,67 +309,62 @@ describe("applyPlan", () => {
 
     expect(result.applied).toEqual([plan.steps[1]]);
     expect(result.skipped).toHaveLength(1);
-    expect(result.skipped[0]!.reason).toContain("%999");
-    expect(gw.renamed).toEqual([{ windowId: "@1", name: "alpha" }]);
+    expect(result.skipped[0]!.reason).toContain("p_gone");
+    expect(gw.renamed).toEqual([{ tabId: spawned.tabId, name: "alpha" }]);
   });
 
-  it("resolves a handle bound by an earlier new-window to the fake's minted window id", async () => {
-    const gw = new FakeTmuxGateway();
-    gw.setPanes([
-      { paneId: "%1", left: 0, top: 0, width: 80, height: 24, cwd: "/a", command: "claude", pid: 1, windowId: "@1", active: false },
-    ]);
+  it("resolves a handle bound by an earlier new-tab to the fake's minted tab id", async () => {
+    const gw = new FakeMuxGateway();
+    const spawned = await gw.spawn({ cwd: "/a", argv: ["claude"] });
     const plan: OrganizePlan = {
+      schemaVersion: 2,
       summary: "s",
       steps: [
-        { op: "new-window", handle: "w:first", name: "first", description: "create first" },
-        { op: "new-window", handle: "w:second", name: "second", description: "create second" },
-        { op: "move-pane", paneId: "%1", to: { kind: "handle", handle: "w:second" }, description: "move into second" },
+        { op: "new-tab", handle: "t:first", name: "first", description: "create first" },
+        { op: "new-tab", handle: "t:second", name: "second", description: "create second" },
+        { op: "move-pane", paneId: spawned.paneId, to: { kind: "handle", handle: "t:second" }, description: "move into second" },
       ],
     };
 
     const result = await applyPlan(plan, gw);
 
     expect(result.skipped).toEqual([]);
-    expect(gw.created).toEqual([
-      { windowId: "@100", name: "first" },
-      { windowId: "@101", name: "second" },
-    ]);
-    expect(gw.joins).toEqual([{ srcPane: "%1", dst: "@101" }]);
+    const created = gw.createdTabs.filter((t) => t.name === "first" || t.name === "second");
+    expect(created.map((t) => t.name)).toEqual(["first", "second"]);
+    expect(gw.moved).toEqual([{ srcPane: spawned.paneId, dstTab: created[1]!.tabId }]);
   });
 
   it("skips a step referencing an unbound handle without touching the gateway", async () => {
-    const gw = new FakeTmuxGateway();
-    gw.setPanes([
-      { paneId: "%1", left: 0, top: 0, width: 80, height: 24, cwd: "/a", command: "claude", pid: 1, windowId: "@1", active: false },
-    ]);
+    const gw = new FakeMuxGateway();
+    const spawned = await gw.spawn({ cwd: "/a", argv: ["claude"] });
     const plan: OrganizePlan = {
+      schemaVersion: 2,
       summary: "s",
-      steps: [{ op: "move-pane", paneId: "%1", to: { kind: "handle", handle: "w:ghost" }, description: "x" }],
+      steps: [{ op: "move-pane", paneId: spawned.paneId, to: { kind: "handle", handle: "t:ghost" }, description: "x" }],
     };
 
     const result = await applyPlan(plan, gw);
 
     expect(result.applied).toEqual([]);
     expect(result.skipped).toHaveLength(1);
-    expect(result.skipped[0]!.reason).toContain("w:ghost");
-    expect(gw.joins).toEqual([]);
+    expect(result.skipped[0]!.reason).toContain("t:ghost");
+    expect(gw.moved).toEqual([]);
   });
 
   it("skips just the step whose gateway call throws, and keeps applying the rest", async () => {
-    const gw = new FakeTmuxGateway();
-    gw.setPanes([
-      { paneId: "%1", left: 0, top: 0, width: 80, height: 24, cwd: "/a", command: "claude", pid: 1, windowId: "@1", active: false },
-      { paneId: "%2", left: 0, top: 0, width: 80, height: 24, cwd: "/a", command: "claude", pid: 2, windowId: "@2", active: false },
-    ]);
-    gw.swapPane = async () => {
-      throw new Error("tmux: can't swap those panes");
+    const gw = new FakeMuxGateway();
+    const a = await gw.spawn({ cwd: "/a", argv: ["claude"], tab: { mode: "existing", tabId: "t_1" } });
+    await gw.spawn({ cwd: "/a", argv: ["claude"], tab: { mode: "existing", tabId: "t_2" } });
+    gw.movePane = async () => {
+      throw new Error("mux: can't move that pane");
     };
 
     const plan: OrganizePlan = {
+      schemaVersion: 2,
       summary: "s",
       steps: [
-        { op: "swap-pane", a: "%1", b: "%2", description: "swap" },
-        { op: "rename-window", window: { kind: "window", windowId: "@1" }, name: "alpha", description: "rename" },
+        { op: "move-pane", paneId: a.paneId, to: { kind: "tab", tabId: "t_2" }, description: "move" },
+        { op: "rename-tab", tab: { kind: "tab", tabId: "t_1" }, name: "alpha", description: "rename" },
       ],
     };
 
@@ -363,19 +372,37 @@ describe("applyPlan", () => {
 
     expect(result.applied).toEqual([plan.steps[1]]);
     expect(result.skipped).toHaveLength(1);
-    expect(result.skipped[0]!.reason).toContain("can't swap");
-    expect(gw.renamed).toEqual([{ windowId: "@1", name: "alpha" }]);
+    expect(result.skipped[0]!.reason).toContain("can't move");
+    expect(gw.renamed).toEqual([{ tabId: "t_1", name: "alpha" }]);
   });
 
-  it("never calls a destructive gateway method — none exists on the interface", async () => {
-    const gw = new FakeTmuxGateway();
-    expect((gw as unknown as Record<string, unknown>)["killPane"]).toBeUndefined();
-    expect((gw as unknown as Record<string, unknown>)["killWindow"]).toBeUndefined();
+  it("skips a v1 plan rather than applying window ops to mux", async () => {
+    const gw = new FakeMuxGateway();
+    await gw.spawn({ cwd: "/a", argv: ["claude"] });
+    const plan = {
+      schemaVersion: 1,
+      summary: "legacy",
+      steps: [{ op: "new-tab", handle: "t:x", name: "x", description: "create" }],
+    } as OrganizePlan;
+
+    const result = await applyPlan(plan, gw);
+
+    expect(result.applied).toEqual([]);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0]!.reason).toContain("schemaVersion 1");
+    expect(gw.createdTabs.filter((t) => t.name === "x")).toEqual([]);
+  });
+
+  it("never calls a destructive gateway method — close is not an organize verb", async () => {
+    const gw = new FakeMuxGateway();
+    const plan: OrganizePlan = { schemaVersion: 2, summary: "s", steps: [] };
+    await applyPlan(plan, gw);
+    expect(gw.closed).toEqual([]);
   });
 });
 
 describe("LlmOrganizePlanner", () => {
-  const panes: OrganizePane[] = [pane({ paneId: "%1", windowId: "@1", cwd: "/repo/alpha" })];
+  const panes: OrganizePane[] = [pane({ paneId: "p_1", tabId: "t_1", cwd: "/repo/alpha" })];
 
   it("falls back to heuristic when argv is explicitly null (no provider configured)", async () => {
     const heuristicPlan = await new HeuristicOrganizePlanner().plan(panes, "tidy up");
@@ -394,16 +421,17 @@ describe("LlmOrganizePlanner", () => {
   it("parses a well-formed reply from the provider into a real plan", async () => {
     const reply = JSON.stringify({
       summary: "one rename",
-      steps: [{ op: "rename-window", window: { kind: "window", windowId: "@1" }, name: "alpha", description: "rename it" }],
+      steps: [{ op: "rename-tab", tab: { kind: "tab", tabId: "t_1" }, name: "alpha", description: "rename it" }],
     });
     const argv = providerArgv(`process.stdout.write(${JSON.stringify(reply)})`);
     const planner = new LlmOrganizePlanner(new HeuristicOrganizePlanner(), argv);
 
     const plan = await planner.plan(panes, "group by project");
 
+    expect(plan.schemaVersion).toBe(2);
     expect(plan.summary).toBe("one rename");
     expect(plan.steps).toEqual([
-      { op: "rename-window", window: { kind: "window", windowId: "@1" }, name: "alpha", description: "rename it" },
+      { op: "rename-tab", tab: { kind: "tab", tabId: "t_1" }, name: "alpha", description: "rename it" },
     ]);
   });
 

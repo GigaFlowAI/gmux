@@ -20,12 +20,16 @@
 import { readFile } from "node:fs/promises";
 import net from "node:net";
 
+import { basename } from "node:path";
+
 import { GmuxError } from "../core/errors.js";
+import { isPaneState } from "../core/gmux-types.js";
 import type { GmuxPane, GridSnapshot, SpawnOpts } from "../core/mux-types.js";
+import type { OrganizePane, OrganizePlanner } from "../core/organize-types.js";
 import { intelTokenPath, muxSocketPath } from "../core/paths.js";
-import { CLASSIFY_TIMEOUT_MS } from "./ask-router.js";
+import { CLASSIFY_TIMEOUT_MS, classifyIntent, type AskIntent } from "./ask-router.js";
 import type { MuxGateway } from "./mux-gateway.js";
-import { ORGANIZE_TIMEOUT_MS } from "./organize.js";
+import { HeuristicOrganizePlanner, LlmOrganizePlanner, ORGANIZE_TIMEOUT_MS } from "./organize.js";
 
 export const EXTRACT_TIMEOUT_MS = 20;
 export const PACK_TIMEOUT_MS = 500;
@@ -76,7 +80,7 @@ function isIntelMethod(method: string): method is IntelMethod {
   return (INTEL_METHODS as readonly string[]).includes(method);
 }
 
-/** Default stubs — real extract/pack/plan/classify land in later tasks. */
+/** Default stubs — extract/pack stay stubbed; classify/plan are live via `liveIntelHandlers`. */
 export function stubIntelHandlers(): IntelHandlers {
   return {
     "prompt.extract": async () => ({
@@ -88,6 +92,70 @@ export function stubIntelHandlers(): IntelHandlers {
     "context.pack": async () => ({ headline: "", seed: "" }),
     "organize.plan": async () => ({ schemaVersion: 2, steps: [] }),
     "classify.intent": async () => ({ intent: "ask" }),
+  };
+}
+
+function readPromptParam(params: unknown): string {
+  if (!params || typeof params !== "object") return "";
+  const o = params as Record<string, unknown>;
+  return typeof o["prompt"] === "string" ? o["prompt"] : typeof o["text"] === "string" ? o["text"] : "";
+}
+
+function readOrganizePanes(params: unknown): OrganizePane[] {
+  if (!params || typeof params !== "object") return [];
+  const raw = (params as Record<string, unknown>)["panes"];
+  if (!Array.isArray(raw)) return [];
+  const out: OrganizePane[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const paneId = typeof o["paneId"] === "string" ? o["paneId"] : "";
+    if (!paneId) continue;
+    const argv = Array.isArray(o["argv"]) ? o["argv"].filter((x): x is string => typeof x === "string") : [];
+    const command =
+      typeof o["command"] === "string"
+        ? o["command"]
+        : argv[0]
+          ? basename(argv[0])
+          : "";
+    const semantics = o["semantics"] && typeof o["semantics"] === "object" ? (o["semantics"] as Record<string, unknown>) : null;
+    const state = typeof o["state"] === "string" && isPaneState(o["state"]) ? o["state"] : null;
+    out.push({
+      paneId,
+      tabId: typeof o["tabId"] === "string" ? o["tabId"] : null,
+      cwd: typeof o["cwd"] === "string" ? o["cwd"] : "",
+      command,
+      harness: typeof o["harness"] === "string" ? o["harness"] : null,
+      state,
+      label: typeof semantics?.["label"] === "string" ? semantics["label"] : typeof o["label"] === "string" ? o["label"] : null,
+      active: o["active"] === true,
+    });
+  }
+  return out;
+}
+
+/**
+ * Live classify.intent / organize.plan. Mux originates these because the user
+ * typed in the gmux prompt (or `gmux organize` planned locally). They never
+ * run on a timer — the sidecar tick does not call them.
+ */
+export function liveIntelHandlers(opts: {
+  classify?: (prompt: string) => Promise<AskIntent>;
+  planner?: OrganizePlanner;
+} = {}): IntelHandlers {
+  const classify = opts.classify ?? ((prompt: string) => classifyIntent(prompt));
+  const planner = opts.planner ?? new LlmOrganizePlanner(new HeuristicOrganizePlanner());
+  return {
+    "classify.intent": async (params) => {
+      const prompt = readPromptParam(params);
+      const intent = await classify(prompt);
+      return { intent };
+    },
+    "organize.plan": async (params) => {
+      const prompt = readPromptParam(params);
+      const panes = readOrganizePanes(params);
+      return planner.plan(panes, prompt.trim() === "" ? undefined : prompt);
+    },
   };
 }
 
@@ -158,6 +226,23 @@ export class MuxClient implements MuxGateway {
       throw error;
     }
     return client;
+  }
+
+  /**
+   * CLI-class session on `mux.sock` (no intel hello). Grouping verbs
+   * (`tab.new` / `tab.rename` / `pane.move` / `pane.break`) are allowed to
+   * `cli` / `tui`, not the sidecar.
+   */
+  static async connectCli(socketPath: string = muxSocketPath()): Promise<MuxClient> {
+    let sock: net.Socket;
+    try {
+      sock = await connectMuxSocket(socketPath);
+    } catch (error) {
+      throw new GmuxError(`failed to connect to ${socketPath}: ${(error as Error).message}`, {
+        fix: "Start gmuxd first (`gmux attach` or `gmux spawn`).",
+      });
+    }
+    return new MuxClient(sock, {});
   }
 
   async hello(token: string): Promise<unknown> {

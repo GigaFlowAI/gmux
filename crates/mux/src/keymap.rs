@@ -1,4 +1,4 @@
-//! Input-mode state machine. Prompt typing is Task 8.
+//! Input-mode state machine. Prompt typing lives in `prompt`; confirm is a drawer.
 //!
 //! From `pty`, intercept **only** `ctrl+t`, `ctrl+g`, `ctrl+q`. `/` is forwarded.
 //! In `sidebar`, `j`/`k` select; Enter dives; printables (including `/`) focus prompt.
@@ -9,6 +9,7 @@ pub enum Mode {
     Sidebar,
     Prompt,
     Drawer,
+    Confirm,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,6 +18,7 @@ pub enum Key {
     Ctrl(char),
     Esc,
     Enter,
+    Backspace,
     Up,
     Down,
     Other,
@@ -32,8 +34,32 @@ pub enum Action {
     SelectNext,
     SelectPrev,
     EnterDrawer,
-    /// Switch to prompt and seed Task 8 with this first character.
+    /// Switch to prompt and seed with this first character.
     StartPrompt(char),
+    PromptChar(char),
+    PromptBackspace,
+    SubmitPrompt,
+    CancelPrompt,
+    ConfirmApply,
+    ConfirmCancel,
+}
+
+/// Mirrors `src/cli/organize-confirm.ts` `confirmKey`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConfirmAction {
+    Apply,
+    Cancel,
+    Exit,
+    Ignore,
+}
+
+pub fn confirm_key(key: Key) -> ConfirmAction {
+    match key {
+        Key::Ctrl('c' | 'd' | 'C' | 'D') => ConfirmAction::Exit,
+        Key::Enter | Key::Char('y' | 'Y') => ConfirmAction::Apply,
+        Key::Esc | Key::Char('n' | 'N') => ConfirmAction::Cancel,
+        _ => ConfirmAction::Ignore,
+    }
 }
 
 pub fn handle(mode: Mode, key: Key) -> (Mode, Action) {
@@ -55,9 +81,12 @@ pub fn handle(mode: Mode, key: Key) -> (Mode, Action) {
             _ => (Mode::Sidebar, Action::None),
         },
         Mode::Prompt => match key {
-            Key::Esc => (Mode::Sidebar, Action::None),
-            Key::Ctrl('g' | 'G') => (Mode::Pty, Action::None),
+            Key::Esc => (Mode::Sidebar, Action::CancelPrompt),
+            Key::Ctrl('g' | 'G') => (Mode::Pty, Action::CancelPrompt),
             Key::Ctrl('q' | 'Q') => (Mode::Prompt, Action::Detach),
+            Key::Enter => (Mode::Prompt, Action::SubmitPrompt),
+            Key::Backspace => (Mode::Prompt, Action::PromptBackspace),
+            Key::Char(c) if !c.is_control() => (Mode::Prompt, Action::PromptChar(c)),
             _ => (Mode::Prompt, Action::None),
         },
         Mode::Drawer => match key {
@@ -67,6 +96,12 @@ pub fn handle(mode: Mode, key: Key) -> (Mode, Action) {
             Key::Char('j' | 'k') | Key::Up | Key::Down => (Mode::Drawer, Action::None),
             Key::Char(c) if !c.is_control() => (Mode::Prompt, Action::StartPrompt(c)),
             _ => (Mode::Drawer, Action::None),
+        },
+        Mode::Confirm => match confirm_key(key) {
+            ConfirmAction::Apply => (Mode::Confirm, Action::ConfirmApply),
+            ConfirmAction::Cancel => (Mode::Sidebar, Action::ConfirmCancel),
+            ConfirmAction::Exit => (Mode::Confirm, Action::Detach),
+            ConfirmAction::Ignore => (Mode::Confirm, Action::None),
         },
     }
 }
@@ -179,6 +214,50 @@ mod tests {
         assert_eq!(
             handle(Mode::Drawer, Key::Esc),
             (Mode::Sidebar, Action::None)
+        );
+    }
+
+    #[test]
+    fn prompt_types_enter_submits_esc_cancels() {
+        assert_eq!(
+            handle(Mode::Prompt, Key::Char('i')),
+            (Mode::Prompt, Action::PromptChar('i'))
+        );
+        assert_eq!(
+            handle(Mode::Prompt, Key::Backspace),
+            (Mode::Prompt, Action::PromptBackspace)
+        );
+        assert_eq!(
+            handle(Mode::Prompt, Key::Enter),
+            (Mode::Prompt, Action::SubmitPrompt)
+        );
+        assert_eq!(
+            handle(Mode::Prompt, Key::Esc),
+            (Mode::Sidebar, Action::CancelPrompt)
+        );
+    }
+
+    #[test]
+    fn confirm_enter_applies_esc_cancels() {
+        assert_eq!(
+            handle(Mode::Confirm, Key::Enter),
+            (Mode::Confirm, Action::ConfirmApply)
+        );
+        assert_eq!(
+            handle(Mode::Confirm, Key::Char('y')),
+            (Mode::Confirm, Action::ConfirmApply)
+        );
+        assert_eq!(
+            handle(Mode::Confirm, Key::Esc),
+            (Mode::Sidebar, Action::ConfirmCancel)
+        );
+        assert_eq!(
+            handle(Mode::Confirm, Key::Char('n')),
+            (Mode::Sidebar, Action::ConfirmCancel)
+        );
+        assert_eq!(
+            handle(Mode::Confirm, Key::Char('a')),
+            (Mode::Confirm, Action::None)
         );
     }
 }

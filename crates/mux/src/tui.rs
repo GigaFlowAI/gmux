@@ -1,5 +1,6 @@
-//! Attach TUI: 40-col sidebar + one PTY. Prompt lives in the sidebar as a dim
-//! `>` (not interactive until Task 8). `ctrl+q` detaches without SIGHUP.
+//! Attach TUI: 40-col sidebar + one PTY. Prompt lives in the sidebar footer.
+//! Typing from `sidebar` focuses it. Enter classifies via mux→intel; organize
+//! plans confirm in the drawer. `ctrl+q` detaches without SIGHUP.
 
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -94,6 +95,46 @@ impl SnapFlight {
             (SnapOutcome::Failed, None)
         }
     }
+}
+
+/// In-flight `prompt.submit` correlated by request id. Generation guard drops
+/// a late classify/plan after Esc cancel.
+#[derive(Debug, Default)]
+struct PromptFlight {
+    id: Option<String>,
+    generation: u64,
+}
+
+impl PromptFlight {
+    fn sent(&mut self, id: impl Into<String>, generation: u64) {
+        self.id = Some(id.into());
+        self.generation = generation;
+    }
+
+    fn on_reply(&mut self, v: &Value) -> Option<Value> {
+        if self.id.as_deref() != reply_id(v).as_deref() {
+            return None;
+        }
+        self.id = None;
+        if v.get("error").is_some() {
+            return Some(json!({ "intent": "ask" }));
+        }
+        Some(v.get("result").cloned().unwrap_or(Value::Null))
+    }
+}
+
+fn on_prompt_reply(mode: &mut Mode, funnel: &mut Funnel, generation: u64, result: &Value) {
+    if !funnel.is_current(generation) {
+        return; // Esc/cancel claimed a newer generation — drop the late plan.
+    }
+    if result.get("intent").and_then(Value::as_str) != Some("organize") {
+        return;
+    }
+    let Some(plan) = result.get("plan").cloned() else {
+        return;
+    };
+    funnel.set_confirm_plan(plan);
+    *mode = Mode::Confirm;
 }
 
 fn reply_id(v: &Value) -> Option<String> {
@@ -209,6 +250,7 @@ pub async fn run(cwd: PathBuf) -> Result<(), TuiError> {
     let mut next_id: u64 = 4;
     let mut last_snap = Instant::now();
     let mut snap = SnapFlight::default();
+    let mut prompt = PromptFlight::default();
     let mut term_rows = term_rows;
 
     paint(
@@ -233,6 +275,7 @@ pub async fn run(cwd: PathBuf) -> Result<(), TuiError> {
                         &mut next_id,
                         &client_id,
                         &mut writer,
+                        &mut prompt,
                     )
                     .await?
                     {
@@ -304,6 +347,18 @@ pub async fn run(cwd: PathBuf) -> Result<(), TuiError> {
                         .await?;
                         snap.sent(id);
                     }
+                    continue;
+                }
+                if let Some(result) = prompt.on_reply(&v) {
+                    on_prompt_reply(&mut mode, &mut funnel, prompt.generation, &result);
+                    paint(
+                        &mut terminal,
+                        last_frame.as_ref(),
+                        &model,
+                        &funnel,
+                        mode,
+                        false,
+                    )?;
                     continue;
                 }
                 let (outcome, result) = snap.on_reply(&v);
@@ -389,6 +444,17 @@ pub(crate) fn chrome_key(mode: Mode, funnel: &mut Funnel, km: keymap::Key) -> (M
             }
         }
         Action::StartPrompt(c) => funnel.set_pending(c),
+        Action::PromptChar(c) => funnel.push_prompt(c),
+        Action::PromptBackspace => funnel.backspace_prompt(),
+        Action::CancelPrompt => {
+            let _ = funnel.next_generation();
+            funnel.clear_prompt();
+            funnel.clear_confirm();
+        }
+        Action::ConfirmCancel => {
+            let _ = funnel.next_generation();
+            funnel.clear_confirm();
+        }
         _ => {}
     }
     (next, action)
@@ -404,6 +470,7 @@ async fn apply_key(
     next_id: &mut u64,
     client_id: &str,
     writer: &mut tokio::net::unix::OwnedWriteHalf,
+    prompt: &mut PromptFlight,
 ) -> Result<bool, TuiError> {
     let (next, action) = chrome_key(*mode, funnel, km);
     *mode = next;
@@ -424,10 +491,42 @@ async fn apply_key(
                 writer.flush().await?;
             }
         }
+        Action::SubmitPrompt => {
+            let text = funnel.take_prompt();
+            if text.trim().is_empty() {
+                return Ok(false);
+            }
+            let generation = funnel.next_generation();
+            let id = send_rpc(
+                ctrl_write,
+                next_id,
+                "prompt.submit",
+                json!({ "prompt": text }),
+            )
+            .await?;
+            prompt.sent(id, generation);
+        }
+        Action::ConfirmApply => {
+            if let Some(plan) = funnel.confirm_plan().cloned() {
+                send_rpc(
+                    ctrl_write,
+                    next_id,
+                    "organize.apply",
+                    json!({ "plan": plan }),
+                )
+                .await?;
+            }
+            funnel.clear_confirm();
+            *mode = Mode::Sidebar;
+        }
         Action::SelectNext
         | Action::SelectPrev
         | Action::EnterDrawer
         | Action::StartPrompt(_)
+        | Action::PromptChar(_)
+        | Action::PromptBackspace
+        | Action::CancelPrompt
+        | Action::ConfirmCancel
         | Action::None => {}
     }
     Ok(false)
@@ -594,6 +693,7 @@ fn key_to_keymap(key: &KeyEvent) -> keymap::Key {
         KeyCode::Char(c) => keymap::Key::Char(c),
         KeyCode::Esc => keymap::Key::Esc,
         KeyCode::Enter => keymap::Key::Enter,
+        KeyCode::Backspace => keymap::Key::Backspace,
         KeyCode::Up => keymap::Key::Up,
         KeyCode::Down => keymap::Key::Down,
         _ => keymap::Key::Other,
@@ -721,7 +821,7 @@ fn paint_sidebar(
     }
     let lay = sidebar::layout(model, funnel, area.height);
     let focused = model.focused_pane_id.as_deref();
-    let chrome = matches!(mode, Mode::Sidebar | Mode::Prompt | Mode::Drawer);
+    let chrome = matches!(mode, Mode::Sidebar | Mode::Prompt | Mode::Drawer | Mode::Confirm);
     let selected = funnel.expanded();
     for (i, line) in lay.lines.iter().enumerate() {
         let y = i as u16;
@@ -992,5 +1092,75 @@ mod tests {
         assert!(funnel.expanded().is_none());
         assert!(funnel.drawer().is_none());
         assert_eq!(mode, Mode::Sidebar);
+    }
+
+    #[test]
+    fn prompt_typing_appends_enter_submits_esc_cancels() {
+        let mut funnel = Funnel::new(vec!["a"]);
+        let (mode, action) = chrome_key(Mode::Sidebar, &mut funnel, keymap::Key::Char('g'));
+        assert_eq!(mode, Mode::Prompt);
+        assert_eq!(action, Action::StartPrompt('g'));
+        assert_eq!(funnel.pending_prompt(), "g");
+
+        let (mode, action) = chrome_key(mode, &mut funnel, keymap::Key::Char('o'));
+        assert_eq!(mode, Mode::Prompt);
+        assert_eq!(action, Action::PromptChar('o'));
+        assert_eq!(funnel.pending_prompt(), "go");
+
+        let (mode, action) = chrome_key(mode, &mut funnel, keymap::Key::Enter);
+        assert_eq!(mode, Mode::Prompt);
+        assert_eq!(action, Action::SubmitPrompt);
+
+        let (mode, action) = chrome_key(Mode::Prompt, &mut funnel, keymap::Key::Esc);
+        assert_eq!(mode, Mode::Sidebar);
+        assert_eq!(action, Action::CancelPrompt);
+        assert_eq!(funnel.pending_prompt(), "");
+    }
+
+    #[test]
+    fn generation_guard_drops_stale_organize_plan() {
+        let mut funnel = Funnel::new(vec!["a"]);
+        let generation = funnel.next_generation();
+        assert!(funnel.is_current(generation));
+        let _ = funnel.next_generation(); // Esc while classify/plan is in flight
+        assert!(!funnel.is_current(generation));
+        let mut mode = Mode::Prompt;
+        on_prompt_reply(
+            &mut mode,
+            &mut funnel,
+            generation,
+            &json!({
+                "intent": "organize",
+                "plan": { "schemaVersion": 2, "summary": "late", "steps": [] },
+            }),
+        );
+        assert!(funnel.confirm_plan().is_none());
+        assert_eq!(mode, Mode::Prompt);
+    }
+
+    #[test]
+    fn organize_reply_opens_confirm_drawer() {
+        let mut funnel = Funnel::new(vec!["a"]);
+        let generation = funnel.next_generation();
+        let mut mode = Mode::Prompt;
+        on_prompt_reply(
+            &mut mode,
+            &mut funnel,
+            generation,
+            &json!({
+                "intent": "organize",
+                "plan": {
+                    "schemaVersion": 2,
+                    "summary": "1 project tab(s), 0 pane(s) moved",
+                    "steps": [],
+                },
+            }),
+        );
+        assert_eq!(mode, Mode::Confirm);
+        assert!(funnel.confirm_plan().is_some());
+        let (mode, action) = chrome_key(mode, &mut funnel, keymap::Key::Esc);
+        assert_eq!(mode, Mode::Sidebar);
+        assert_eq!(action, Action::ConfirmCancel);
+        assert!(funnel.confirm_plan().is_none());
     }
 }
