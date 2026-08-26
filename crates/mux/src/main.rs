@@ -62,37 +62,11 @@ async fn main() {
         }
     };
 
-    spawn_sidecar();
-
     if let Err(err) = protocol::run(paths, lock).await {
         eprintln!("error {err}");
         eprintln!("fix   check mux.sock is unused and the cache dir is writable");
         std::process::exit(1);
     }
-}
-
-/// Best-effort: mux → sidecar. Missing `gmux` is fail-open (TUI still attaches).
-fn spawn_sidecar() {
-    let Some(gmux) = find_gmux() else {
-        return;
-    };
-    let _ = std::process::Command::new(gmux)
-        .args(["daemon", "--sidecar"])
-        .env("GMUX_CHILD", "1")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
-}
-
-fn find_gmux() -> Option<std::path::PathBuf> {
-    if let Ok(p) = std::env::var("GMUX_PATH") {
-        let pb = std::path::PathBuf::from(p);
-        if pb.exists() {
-            return Some(pb);
-        }
-    }
-    None
 }
 
 fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {

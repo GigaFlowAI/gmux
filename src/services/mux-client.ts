@@ -10,7 +10,7 @@
  *   context.pack (PACK_TIMEOUT_MS 500),
  *   classify.intent (CLASSIFY_TIMEOUT_MS),
  *   organize.plan (ORGANIZE_TIMEOUT_MS)
- * intel → mux: pane.report_semantics
+ * intel → mux: pane.report_semantics, guardian.broadcast (agent panes only)
  *
  * Transport: either peer may originate `{id,method,params}`. Correlation is `id`.
  * Token file `intel.token` is mode 0o600, minted by gmuxd; this client presents
@@ -242,6 +242,10 @@ export class MuxClient implements MuxGateway {
 
   async reportSemantics(patch: IntelPatch): Promise<void> {
     await this.request("pane.report_semantics", { ...patch });
+  }
+
+  async guardianBroadcast(message: string): Promise<void> {
+    await this.request("guardian.broadcast", { message });
   }
 
   async close(): Promise<void> {

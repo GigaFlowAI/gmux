@@ -201,6 +201,20 @@ impl Mux {
         self.write_input(pane_id, keys.as_bytes())
     }
 
+    /// Intel guardian broadcast: send_keys to panes with `harness != null` only.
+    pub fn guardian_broadcast(&mut self, message: &str) -> Vec<String> {
+        let ids: Vec<String> = self
+            .panes
+            .values()
+            .filter(|p| p.harness.is_some())
+            .map(|p| p.id.clone())
+            .collect();
+        for id in &ids {
+            let _ = self.send_keys(id, message);
+        }
+        ids
+    }
+
     pub fn read_grid(&self, pane_id: &str, rows: Option<usize>) -> Result<GridSnapshot, MuxError> {
         let pane = self
             .panes

@@ -137,4 +137,18 @@ describe("MuxClient", () => {
     expect(msg.result).toMatchObject({ extractor: "shadow", confidence: "low" });
     await client.close();
   });
+
+  it("sends guardian.broadcast not pane.send_keys", async () => {
+    const pair = await loopback();
+    cleanup = pair.close;
+    const { lines } = attachMux(pair.peer, (req) =>
+      req.method === "hello" ? { ok: true, class: "intel" } : { ok: true },
+    );
+    const client = new MuxClient(pair.client);
+    await client.hello("tok_test");
+    await client.guardianBroadcast("slow down\n");
+    expect(lines.some((l) => l.method === "guardian.broadcast")).toBe(true);
+    expect(lines.some((l) => l.method === "pane.send_keys")).toBe(false);
+    await client.close();
+  });
 });

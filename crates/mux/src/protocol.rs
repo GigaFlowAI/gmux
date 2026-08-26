@@ -12,7 +12,7 @@
 //!   prompt.extract (20 ms), context.pack (500 ms),
 //!   classify.intent (30_000 ms = CLASSIFY_TIMEOUT_MS),
 //!   organize.plan (120_000 ms = ORGANIZE_TIMEOUT_MS)
-//! intel → mux: pane.report_semantics
+//! intel → mux: pane.report_semantics, guardian.broadcast (agent panes only)
 //!
 //! Peel is mux-local and must not await extract. A hung sidecar cannot block
 //! ctrl+t. `session.snapshot` is mux-assembled (layout + last intel patches).
@@ -20,7 +20,8 @@
 use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::AsRawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -92,7 +93,7 @@ impl IntelHub {
                 )
             })?;
         match tokio::time::timeout(timeout, rx).await {
-            Ok(Ok(v)) => Ok(v),
+            Ok(Ok(v)) => intel_reply_result(&v),
             Ok(Err(_)) => Err(MuxError::rpc(
                 "intel_down",
                 "intel sidecar dropped the reply",
@@ -126,15 +127,9 @@ use crate::peer::{self, CallerClass};
 use crate::session::{Mux, MuxError, SpawnOpts, TabSpec};
 
 pub async fn run(paths: Paths, lock: Lock) -> std::io::Result<()> {
-    let token = mint_token(&paths)?;
-    let sock = paths.socket_path();
-    if sock.exists() {
-        let _ = std::fs::remove_file(&sock);
-    }
-    paths.ensure_dir()?;
-
-    let listener = UnixListener::bind(&sock)?;
-    std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600))?;
+    // Mux first: mint token + bind mux.sock, then spawn the sidecar.
+    let (token, listener) = prepare_listener(&paths)?;
+    spawn_sidecar();
 
     let mux = Arc::new(Mutex::new(Mux::new(paths.clone(), token)));
     let lock = Arc::new(Mutex::new(lock));
@@ -158,7 +153,7 @@ pub async fn run(paths: Paths, lock: Lock) -> std::io::Result<()> {
         }
     }
 
-    let _ = std::fs::remove_file(&sock);
+    let _ = std::fs::remove_file(paths.socket_path());
     Ok(())
 }
 
@@ -192,6 +187,88 @@ fn mint_token(paths: &Paths) -> std::io::Result<String> {
     std::fs::write(&path, &token)?;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
     Ok(token)
+}
+
+/// Mint `intel.token` and bind `mux.sock` (mode 0o600). Sidecar spawn must
+/// happen *after* this returns so hello can present the token.
+fn prepare_listener(paths: &Paths) -> std::io::Result<(String, UnixListener)> {
+    let token = mint_token(paths)?;
+    let sock = paths.socket_path();
+    if sock.exists() {
+        let _ = std::fs::remove_file(&sock);
+    }
+    paths.ensure_dir()?;
+    let listener = UnixListener::bind(&sock)?;
+    std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600))?;
+    Ok((token, listener))
+}
+
+/// `GMUX_PATH` if it is a file, else `gmux` on PATH. Missing is fail-open.
+pub(crate) fn find_gmux_from(gmux_path: Option<&str>, path: Option<&str>) -> Option<PathBuf> {
+    if let Some(p) = gmux_path {
+        let pb = PathBuf::from(p);
+        if pb.is_file() {
+            return Some(pb);
+        }
+    }
+    let path = path?;
+    for dir in path.split(':') {
+        if dir.is_empty() {
+            continue;
+        }
+        let cand = PathBuf::from(dir).join("gmux");
+        if cand.is_file() {
+            return Some(cand);
+        }
+    }
+    None
+}
+
+fn find_gmux() -> Option<PathBuf> {
+    find_gmux_from(
+        std::env::var("GMUX_PATH").ok().as_deref(),
+        std::env::var("PATH").ok().as_deref(),
+    )
+}
+
+fn spawn_sidecar() {
+    if let Some(gmux) = find_gmux() {
+        spawn_sidecar_bin(&gmux);
+    }
+}
+
+pub(crate) fn spawn_sidecar_bin(gmux: &Path) {
+    let _ = Command::new(gmux)
+        .args(["daemon", "--sidecar"])
+        .env("GMUX_CHILD", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+}
+
+/// Map an intel NDJSON reply to Ok(result) or Err(error). An `{id, error}`
+/// line is never success.
+pub(crate) fn intel_reply_result(value: &Value) -> Result<Value, MuxError> {
+    if let Some(err) = value.get("error") {
+        return Err(MuxError::rpc(
+            err.get("code").and_then(Value::as_str).unwrap_or("intel_error"),
+            err.get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("intel error"),
+            err.get("fix")
+                .and_then(Value::as_str)
+                .unwrap_or("Restart `gmux daemon --sidecar`"),
+        ));
+    }
+    match value.get("result") {
+        Some(result) => Ok(result.clone()),
+        None => Err(MuxError::rpc(
+            "intel_error",
+            "intel reply missing result",
+            "Restart `gmux daemon --sidecar`",
+        )),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -521,16 +598,7 @@ async fn dispatch(
                 .get("message")
                 .and_then(Value::as_str)
                 .unwrap_or("");
-            let mut guard = mux.lock().expect("mux");
-            let ids: Vec<String> = guard
-                .panes
-                .values()
-                .filter(|p| p.harness.is_some())
-                .map(|p| p.id.clone())
-                .collect();
-            for id in ids {
-                let _ = guard.send_keys(&id, message);
-            }
+            mux.lock().expect("mux").guardian_broadcast(message);
             ok(&req.id, json!({"ok": true}))
         }),
         other => error(
@@ -565,7 +633,7 @@ fn gated(
     }
 }
 
-fn allowed(class: CallerClass, method: &str) -> bool {
+pub(crate) fn allowed(class: CallerClass, method: &str) -> bool {
     match class {
         CallerClass::Cli | CallerClass::Tui => true,
         CallerClass::Intel => matches!(
@@ -577,7 +645,6 @@ fn allowed(class: CallerClass, method: &str) -> bool {
                 | "events.subscribe"
                 | "pane.read"
                 | "pane.report_semantics"
-                | "pane.send_keys"
                 | "guardian.broadcast"
         ),
         CallerClass::Pane => matches!(
@@ -827,4 +894,96 @@ async fn write_json(
     let mut w = writer.lock().await;
     w.write_all(line.as_bytes()).await?;
     w.flush().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::peer::CallerClass;
+
+    #[test]
+    fn intel_may_not_send_keys() {
+        assert!(!allowed(CallerClass::Intel, "pane.send_keys"));
+        assert!(allowed(CallerClass::Intel, "guardian.broadcast"));
+        assert!(allowed(CallerClass::Intel, "pane.report_semantics"));
+        assert!(allowed(CallerClass::Cli, "pane.send_keys"));
+        assert!(allowed(CallerClass::Tui, "pane.send_keys"));
+    }
+
+    #[test]
+    fn intel_error_reply_is_err_not_ok() {
+        let reply = json!({
+            "id": "ex_1",
+            "error": {"code": "timeout", "message": "hung", "fix": "retry"}
+        });
+        let err = intel_reply_result(&reply).unwrap_err();
+        assert_eq!(err.code(), "timeout");
+        assert!(err.message().contains("hung"));
+        assert_eq!(err.fix(), "retry");
+    }
+
+    #[test]
+    fn intel_result_reply_returns_result_only() {
+        let reply = json!({"id": "ex_1", "result": {"text": "hi"}});
+        let value = intel_reply_result(&reply).unwrap();
+        assert_eq!(value, json!({"text": "hi"}));
+    }
+
+    #[test]
+    fn find_gmux_uses_path_when_gmux_path_unset() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("gmux");
+        std::fs::write(&bin, "#!/bin/sh\n").unwrap();
+        let found = find_gmux_from(None, Some(dir.path().to_str().unwrap()));
+        assert_eq!(found.as_deref(), Some(bin.as_path()));
+    }
+
+    #[test]
+    fn find_gmux_prefers_gmux_path_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let on_path = dir.path().join("gmux");
+        std::fs::write(&on_path, "path").unwrap();
+        let explicit = dir.path().join("explicit-gmux");
+        std::fs::write(&explicit, "explicit").unwrap();
+        let found = find_gmux_from(
+            Some(explicit.to_str().unwrap()),
+            Some(dir.path().to_str().unwrap()),
+        );
+        assert_eq!(found.as_deref(), Some(explicit.as_path()));
+    }
+
+    #[tokio::test]
+    async fn sidecar_spawn_sees_token_and_socket() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::from_dir(dir.path());
+        let (_token, _listener) = prepare_listener(&paths).unwrap();
+        assert!(paths.intel_token_path().is_file());
+        assert!(paths.socket_path().exists());
+
+        let marker = dir.path().join("spawned");
+        let script = dir.path().join("gmux");
+        let sock = paths.socket_path();
+        let token = paths.intel_token_path();
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nif [ -e {sock:?} ] && [ -e {token:?} ]; then echo ok > {marker:?}; fi\n"
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        spawn_sidecar_bin(&script);
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1000);
+        while std::time::Instant::now() < deadline {
+            if marker.is_file() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            marker.is_file(),
+            "sidecar spawn must observe mux.sock and intel.token"
+        );
+    }
 }

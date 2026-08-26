@@ -147,6 +147,7 @@ export function buildSidecarDeps(
   gmuxCfg: GmuxConfig,
   provider: LabelProvider,
   report?: SidecarDaemonDeps["report"],
+  broadcast?: SidecarDaemonDeps["broadcast"],
 ): SidecarDaemonDeps {
   const semantic = new SemanticWorker(model, provider, new SemanticGate());
   const resources = new ResourceMonitor();
@@ -155,7 +156,7 @@ export function buildSidecarDeps(
     threshold: gmuxCfg.memoryThreshold,
     cooldownSeconds: gmuxCfg.cooldownSeconds,
   });
-  return { gateway, model, now: () => Date.now(), semantic, resources, guardian, report };
+  return { gateway, model, now: () => Date.now(), semantic, resources, guardian, report, broadcast };
 }
 
 // --- Lock -------------------------------------------------------------
@@ -183,7 +184,14 @@ async function runSidecarForeground(): Promise<void> {
   const gmuxCfg = resolveGmuxConfig(config);
   const provider = await defaultLabelProvider();
   const model = new WorkspaceModel();
-  const deps = buildSidecarDeps(client, model, gmuxCfg, provider, (patch) => client.reportSemantics(patch));
+  const deps = buildSidecarDeps(
+    client,
+    model,
+    gmuxCfg,
+    provider,
+    (patch) => client.reportSemantics(patch),
+    (message) => client.guardianBroadcast(message),
+  );
   const ac = new AbortController();
   const stop = (): void => ac.abort();
   try {

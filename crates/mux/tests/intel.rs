@@ -57,3 +57,14 @@ async fn mux_only_glyphs_when_intel_down() {
     assert_eq!(snap["intel"]["up"], false);
     let _ = WORKING_WINDOW_MS;
 }
+
+#[tokio::test]
+async fn guardian_broadcast_sends_only_to_agent_panes() {
+    let h = harness::start().await;
+    let agent = h.spawn_shell("/tmp").await;
+    let shell = h.spawn_shell("/tmp").await;
+    h.set_harness(&agent.pane_id, Some("claude-code"));
+    let sent = h.guardian_broadcast("slow down\n");
+    assert_eq!(sent, vec![agent.pane_id]);
+    assert!(!sent.contains(&shell.pane_id));
+}

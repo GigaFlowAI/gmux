@@ -28,6 +28,8 @@ export interface SidecarDaemonDeps {
   resolveAgents?: (present: PaneIdentity[]) => string[];
   /** When set (the live MuxClient), patches are pushed to mux by paneId. */
   report?: MuxClient["reportSemantics"];
+  /** Intel → mux `guardian.broadcast` (mux filters to harness != null). Never `pane.send_keys`. */
+  broadcast?: (message: string) => Promise<void>;
 }
 
 export class SidecarDaemon {
@@ -104,9 +106,7 @@ export class SidecarDaemon {
           const decision = this.deps.guardian.decide(host, panes, now);
           if (decision.action !== "none") {
             if (decision.action === "broadcast") {
-              for (const id of agentIds) {
-                await this.deps.gateway.send(id, decision.message + "\n").catch(() => {});
-              }
+              await this.deps.broadcast?.(decision.message + "\n").catch(() => {});
             }
             this.deps.model.logGuardian({
               ts: now,

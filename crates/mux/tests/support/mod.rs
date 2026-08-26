@@ -198,4 +198,13 @@ impl Harness {
             .expect("grid")
             .set_last_byte_ms(ms);
     }
+
+    pub fn set_harness(&self, pane_id: &str, harness: Option<&str>) {
+        let mut mux = self.mux.lock().unwrap();
+        mux.panes.get_mut(pane_id).expect("pane").harness = harness.map(str::to_string);
+    }
+
+    pub fn guardian_broadcast(&self, message: &str) -> Vec<String> {
+        self.mux.lock().unwrap().guardian_broadcast(message)
+    }
 }
