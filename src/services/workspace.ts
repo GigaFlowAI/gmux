@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import type {
   GuardianLogEntry, HostPressure, PaneEntry, PaneIdentity, PaneResources, PaneSemantics, PaneState, WorkspaceSnapshot,
-} from "../core/gmux-types.js";
+} from "../core/workspace-types.js";
 
 export class WorkspaceModel extends EventEmitter {
   private entries = new Map<string, PaneEntry>();

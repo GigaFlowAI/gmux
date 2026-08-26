@@ -43,7 +43,7 @@ export async function searchSessions(options: SearchOptions): Promise<SearchHit[
     "--json",
     ...(options.regex ? [] : ["--fixed-strings"]),
     // Always pass the pattern via -e. As a bare positional, a query that starts
-    // with a dash (`gmux grep "-n"`) would be parsed by ripgrep as an option.
+    // with a dash (`gm grep "-n"`) would be parsed by ripgrep as an option.
     "-e",
     query,
     options.caseSensitive ? "--case-sensitive" : "--ignore-case",

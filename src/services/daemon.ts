@@ -7,7 +7,7 @@
  * driven headlessly in tests, without a real tmux server.
  */
 
-import type { Observation, PaneEntry, PaneIdentity } from "../core/gmux-types.js";
+import type { Observation, PaneEntry, PaneIdentity } from "../core/workspace-types.js";
 import { classifyState } from "../core/pane-state.js";
 import type { TmuxGateway } from "./tmux-gateway.js";
 import { PaneRegistry } from "./pane-registry.js";

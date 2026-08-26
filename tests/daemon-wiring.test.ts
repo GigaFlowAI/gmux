@@ -1,20 +1,19 @@
 /**
- * Regression-proofs FIX A: `gmux daemon run` must assemble ALL four phases.
+ * Regression-proofs FIX A: `gm daemon run` must assemble ALL four phases.
  *
  * Hermetic — no real processes, no socket. It exercises the pure assembly
  * helper `buildDaemonDeps` (what the `run` action calls) and asserts the
  * returned deps carry a semantic worker, a resource monitor, and a guardian
- * configured from the passed `GmuxConfig`.
+ * configured from the passed `GigamanageConfig`.
  */
 import { describe, expect, it } from "vitest";
 import { FakeTmuxGateway } from "./fixtures/fake-gateway.js";
-import { FakeMuxGateway } from "../src/services/mux-gateway.js";
-import { buildDaemonDeps, buildSidecarDeps } from "../src/cli/commands/daemon.js";
+import { buildDaemonDeps } from "../src/cli/commands/daemon.js";
 import { WorkspaceModel } from "../src/services/workspace.js";
 import { Guardian } from "../src/services/guardian.js";
 import { ResourceMonitor } from "../src/services/resources.js";
 import { SemanticWorker, type LabelProvider } from "../src/services/semantic.js";
-import type { GmuxConfig, HostPressure, PaneEntry } from "../src/core/gmux-types.js";
+import type { GigamanageConfig, HostPressure, PaneEntry } from "../src/core/workspace-types.js";
 
 const stubProvider: LabelProvider = {
   async label() {
@@ -22,7 +21,7 @@ const stubProvider: LabelProvider = {
   },
 };
 
-const sampleConfig: GmuxConfig = {
+const sampleConfig: GigamanageConfig = {
   guardianPolicy: "notify",
   memoryThreshold: 0.5,
   cooldownSeconds: 300,
@@ -50,7 +49,7 @@ describe("buildDaemonDeps", () => {
 
     // usedRatio 0.6 is over the config's 0.5 threshold but UNDER the default
     // 0.9 — so a "notify" here proves both the policy and the threshold came
-    // from `sampleConfig`, not from DEFAULT_GMUX_CONFIG.
+    // from `sampleConfig`, not from DEFAULT_GIGAMANAGE_CONFIG.
     const host: HostPressure = { usedRatio: 0.6, unattributed: 0, ts: 1000 };
     const agent: PaneEntry = {
       identity: {
@@ -62,20 +61,5 @@ describe("buildDaemonDeps", () => {
     };
     const decision = deps.guardian!.decide(host, [agent], 1000);
     expect(decision.action).toBe("notify");
-  });
-});
-
-describe("buildSidecarDeps", () => {
-  it("assembles mux gateway + semantic + resources + guardian", () => {
-    const gateway = new FakeMuxGateway();
-    const model = new WorkspaceModel();
-    const deps = buildSidecarDeps(gateway, model, sampleConfig, stubProvider);
-
-    expect(deps.gateway).toBe(gateway);
-    expect(deps.model).toBe(model);
-    expect(deps.semantic).toBeInstanceOf(SemanticWorker);
-    expect(deps.resources).toBeInstanceOf(ResourceMonitor);
-    expect(deps.guardian).toBeInstanceOf(Guardian);
-    expect(deps.resolveAgents).toBeUndefined();
   });
 });

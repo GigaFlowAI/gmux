@@ -46,13 +46,13 @@ Steps 1–3 are free and always run. Steps 4–5 cost money and only run when yo
 
 ## Why summaries read the arc
 
-Claude Code writes an `aiTitle` in a session's first seconds and never revises it. In a long session it names the opening prompt — precisely the wrong thing when you're deciding what to resume. gmux exists to fix that.
+Claude Code writes an `aiTitle` in a session's first seconds and never revises it. In a long session it names the opening prompt — precisely the wrong thing when you're deciding what to resume. gm exists to fix that.
 
 The first fix was to read only the **end** of the session. That overcorrected: a status with no subject ("timestamp check still red") tells you nothing when you cannot remember which session it belongs to. So `distill()` sends the **arc** — the original ask, waypoints sampled across the session, the recent human turns, the final assistant message, files touched, the last failure. The head is in the prompt; it never speaks alone, and the recorded title is always labelled stale.
 
 ## The index
 
-`~/.cache/gmux/index.json`, keyed per file on `(mtimeMs, size)`. Unchanged files are served from cache; changed ones are re-parsed. Measured on 1,148 real sessions (523 MB): **cold 1.2s, warm 59ms**.
+`~/.cache/gigamanage/index.json`, keyed per file on `(mtimeMs, size)`. Unchanged files are served from cache; changed ones are re-parsed. Measured on 1,148 real sessions (523 MB): **cold 1.2s, warm 59ms**.
 
 Writes go through a temp file and a rename, so a killed process can't leave a half-written index. A corrupt index is treated as a cache miss, not an error.
 
@@ -60,14 +60,14 @@ Writes go through a temp file and a rename, so a killed process can't leave a ha
 
 ## Summaries and caching
 
-Cached at `~/.cache/gmux/summaries/<harness>-<id>.json`, keyed by a hash of the distilled input. A summary is stale exactly when its session's distilled content changes — not on a timer, and not when unrelated parts of the file move.
+Cached at `~/.cache/gigamanage/summaries/<harness>-<id>.json`, keyed by a hash of the distilled input. A summary is stale exactly when its session's distilled content changes — not on a timer, and not when unrelated parts of the file move.
 
-The provider is a CLI that reads a prompt on stdin and writes text. That is the whole abstraction, and it is why gmux doesn't depend on any particular vendor's SDK.
+The provider is a CLI that reads a prompt on stdin and writes text. That is the whole abstraction, and it is why gm doesn't depend on any particular vendor's SDK.
 
 Which CLI gets called is resolved in this order, highest first:
 
-1. `GMUX_SUMMARY_CMD` — the env var, which predates config and must keep working untouched.
-2. `~/.config/gmux/config.json` — what the user chose in `gmux setup`. A `provider` of `null` means "make no model calls", and is honored as a decision rather than treated as a fault.
+1. `GIGAMANAGE_SUMMARY_CMD` — the env var, which predates config and must keep working untouched.
+2. `~/.config/gigamanage/config.json` — what the user chose in `gm setup`. A `provider` of `null` means "make no model calls", and is honored as a decision rather than treated as a fault.
 3. The first provider from `services/providers.ts` found on PATH.
 4. `claude -p`.
 
@@ -77,9 +77,9 @@ Rules 3 and 4 are the behavior from before config existed, so an upgrading user 
 
 ## Config vs cache
 
-gmux owns two directories, and the split is load-bearing:
+gm owns two directories, and the split is load-bearing:
 
-| | `~/.cache/gmux` | `~/.config/gmux` |
+| | `~/.cache/gigamanage` | `~/.config/gigamanage` |
 |---|---|---|
 | holds | the index, summaries | the provider choice |
 | keyed by | content hash | nothing |
@@ -89,13 +89,13 @@ Anything derived goes left. Anything a human typed goes right.
 
 ## Ask
 
-`gmux ask` answers questions across sessions, starting from the summaries already
+`gm ask` answers questions across sessions, starting from the summaries already
 on disk — one bounded prompt, not a scan of half a gigabyte.
 
 **Its tool loop belongs to the harness, not to us.** The prompt tells the model it
-may run `gmux grep '<query>' --json`, and the provider is invoked with exactly that
-permission (`askArgv` in the catalog; for Claude Code, `--allowedTools 'Bash(gmux grep:*)'`).
-gmux parses no tool calls and speaks no vendor protocol — which is what
+may run `gm grep '<query>' --json`, and the provider is invoked with exactly that
+permission (`askArgv` in the catalog; for Claude Code, `--allowedTools 'Bash(gm grep:*)'`).
+gm parses no tool calls and speaks no vendor protocol — which is what
 keeps the provider abstraction the single line above it. Building our own loop
 would mean per-vendor protocol handling: precisely the coupling this design
 exists to avoid.
@@ -107,14 +107,14 @@ Because the providers we call are one-shot (`claude -p` is; `--resume` is
 Claude-specific), the REPL keeps its transcript in memory and replays it each
 turn. That stays bounded because the context block is.
 
-`gmux ask` spawns its provider with `GMUX_CHILD=1`, which makes any nested
-`gmux` skip the background summarize pass. Without it, a model call could start a
+`gm ask` spawns its provider with `GIGAMANAGE_CHILD=1`, which makes any nested
+`gm` skip the background summarize pass. Without it, a model call could start a
 model call.
 
 ## Search
 
-Half a gigabyte of JSONL is too much to scan in Node, so `gmux grep` shells out to ripgrep with `--json` and maps hits back onto indexed sessions by file path. Sessions are filtered *before* the search (so `--project` narrows the corpus), but results are capped *after* it — capping the corpus first would silently hide matches.
+Half a gigabyte of JSONL is too much to scan in Node, so `gm grep` shells out to ripgrep with `--json` and maps hits back onto indexed sessions by file path. Sessions are filtered *before* the search (so `--project` narrows the corpus), but results are capped *after* it — capping the corpus first would silently hide matches.
 
 ## Read-only, on purpose
 
-gmux never writes to a session file. It reads harness directories and owns exactly one thing: its cache. This is what makes it safe to run against sessions that are still live and being appended to — which, on a working machine, most of them are.
+gm never writes to a session file. It reads harness directories and owns exactly one thing: its cache. This is what makes it safe to run against sessions that are still live and being appended to — which, on a working machine, most of them are.

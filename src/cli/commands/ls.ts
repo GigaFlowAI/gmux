@@ -2,7 +2,7 @@ import type { Command } from "commander";
 
 import { SCHEMA_VERSION, type ListFilters } from "../../core/types.js";
 import { parseSince } from "../../core/text.js";
-import { GmuxError } from "../../core/errors.js";
+import { GigamanageError } from "../../core/errors.js";
 import { loadViews } from "../../services/views.js";
 import { inProgressIds, maybeAutoSummarize } from "../../services/auto-summarize.js";
 import { dim, formatLegend, formatRowLines, jsonEnvelope, terminalWidth } from "../format.js";
@@ -27,7 +27,7 @@ export interface LsOptions {
  * ROOT program, and commander does not copy root options into a subcommand's
  * own `opts()` — reading `options.autoSummarize` there yields `undefined`
  * forever, so `undefined !== false` is always true and the flag silently does
- * nothing. That is exactly what `gmux --no-auto-summarize ls` did before this
+ * nothing. That is exactly what `gm --no-auto-summarize ls` did before this
  * existed: it spent tokens the user had explicitly declined.
  *
  * Shared by `ls`, `pick` and `__picker-rows` so the three cannot drift apart.
@@ -50,7 +50,7 @@ export function toFilters(options: LsOptions, fallbackLimit: number): ListFilter
   if (options.since) {
     const cutoff = parseSince(options.since);
     if (!cutoff) {
-      throw new GmuxError(`Could not understand --since "${options.since}".`, {
+      throw new GigamanageError(`Could not understand --since "${options.since}".`, {
         fix: "Use a duration like `3d`, `12h`, `2w`, or an ISO date like `2026-07-01`.",
         exitCode: 2,
       });
@@ -86,7 +86,7 @@ export function registerLs(program: Command): void {
       }
 
       // Kick the background pass off BEFORE rendering, over exactly the sessions
-      // we are about to show — so `gmux ls -n 50` summarizes all fifty, and the
+      // we are about to show — so `gm ls -n 50` summarizes all fifty, and the
       // rows it just picked up can be marked ◐ on this very run rather than the
       // next one. Deciding costs a lock write and a spawn; the model calls all
       // happen in the detached child.
@@ -100,7 +100,7 @@ export function registerLs(program: Command): void {
       const inProgress = new Set([...(await inProgressIds()), ...started.targetIds]);
 
       // Wrap to the terminal so a long summary is readable in full. When piped,
-      // stay one line per session so `gmux ls | grep` still works.
+      // stay one line per session so `gm ls | grep` still works.
       const width = process.stdout.isTTY ? terminalWidth() : Number.POSITIVE_INFINITY;
       const now = new Date();
       for (const view of views) {

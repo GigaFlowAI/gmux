@@ -4,6 +4,30 @@ Notable changes, newest first. Versions follow [semver](https://semver.org): whi
 0.x, a **minor** bump means behavior changed in a way you should read about before
 upgrading, and a **patch** is a fix that asks nothing of you.
 
+## 0.17.0
+
+### Back to gigamanage / `gm`, and the tmux cockpit
+
+Native attach (`gmux attach`, `gmuxd`, peel) is unshipped. The live surface is
+again the tmux cockpit: `gm setup`, `gm tmux install`, `gm daemon`, **ctrl+g**.
+
+The package, command, env, and paths are gigamanage again:
+
+```bash
+npm uninstall -g @gigaflow/gmux
+npm install -g gigamanage
+gm setup
+tmux source-file ~/.tmux.conf
+gm daemon
+```
+
+- Binaries: `gm` and `gigamanage`
+- Env: `GIGAMANAGE_*` (was `GMUX_*`)
+- State: `~/.config/gigamanage` and `~/.cache/gigamanage`
+- `gm tmux uninstall` still strips a leftover `# >>> gmux >>>` block
+
+Native multiplexer work belongs in a later repo, not this one.
+
 ## 0.16.0
 
 ### Cockpit prompt, work report, and an onboarding path that actually lands

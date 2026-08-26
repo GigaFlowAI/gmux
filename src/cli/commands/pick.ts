@@ -54,14 +54,14 @@ export function filterArgs(options: LsOptions): string[] {
 }
 
 /**
- * The argv behind ctrl-o, reproducing this picker's filter set for `gmux ask`.
+ * The argv behind ctrl-o, reproducing this picker's filter set for `gm ask`.
  *
  * Pure, and separate from `pickerReloadArgs` only because the two target
  * different commands — they carry the same filters for the same reason.
  *
- * THE FILTERS ARE THE POINT. `gmux ask` builds its own window; left to its
+ * THE FILTERS ARE THE POINT. `gm ask` builds its own window; left to its
  * defaults it takes the 20 most recent sessions across every project, which for
- * `gmux pick -p webshop` (or any pick past the 20th row) does not contain the
+ * `gm pick -p webshop` (or any pick past the 20th row) does not contain the
  * session you are highlighting. `--focus` then finds nothing, resolves to null,
  * and the chat answers about sessions you were not looking at — with no sign
  * anything went wrong.
@@ -149,7 +149,7 @@ function pickerChatSpec(options: LsOptions, transcript: string): ChatSpec | unde
  * nobody will ever read. Measured — `kill -TERM <worker>` leaves the provider
  * orphaned and alive; only the group dies together.
  *
- * Never throws. A cleanup that fails must not become the way `gmux pick` reports
+ * Never throws. A cleanup that fails must not become the way `gm pick` reports
  * that you picked a session.
  */
 function closeChatThread(transcript: string): () => Promise<void> {
@@ -200,17 +200,17 @@ async function refresh(
 }
 
 /**
- * The bare `gmux` command: pick a recent session, then resume it.
+ * The bare `gm` command: pick a recent session, then resume it.
  * This is the whole point of the tool — everything else is in service of it.
  *
  * Registered as commander's *default* command rather than as options on the root
  * program. Hanging `-n`/`-p` off the root would shadow the identically-named
- * flags on `gmux ls`, so `gmux ls -n 8` would silently ignore the 8.
+ * flags on `gm ls`, so `gm ls -n 8` would silently ignore the 8.
  */
 export function registerPick(program: Command): void {
   program
     .command("pick", { isDefault: true })
-    .description("pick a recent session and resume it (this is what bare `gmux` does)")
+    .description("pick a recent session and resume it (this is what bare `gm` does)")
     .option("--harness <id>", "only this harness")
     .option("-p, --project <name>", "only sessions whose project matches")
     .option("-b, --branch <name>", "only sessions whose git branch matches")
@@ -235,7 +235,7 @@ export function registerPick(program: Command): void {
 
       if (opened.views.length === 0) {
         process.stdout.write(
-          `${dim("No sessions found. If you expected some, run `gmux doctor`.")}\n`,
+          `${dim("No sessions found. If you expected some, run `gm doctor`.")}\n`,
         );
         return;
       }
@@ -271,7 +271,7 @@ export function registerPick(program: Command): void {
         // `r` in the numbered fallback: forced, like the ctrl-r it stands in for.
         reload: () => refresh(options, enabled, true),
         // ctrl-r can surface a session that did not exist when we opened. Look
-        // it up the way `gmux resume <id>` does — naming a session explicitly
+        // it up the way `gm resume <id>` does — naming a session explicitly
         // means you want it, even if the list filters would now hide it.
         resolve: async (id) => {
           const fresh = await loadViews({ includeSidechains: true, includeAutomated: true });

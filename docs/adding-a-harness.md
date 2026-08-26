@@ -36,7 +36,7 @@ Everything is nullable except `sessionId`, `updatedAt` and the flags. Set what y
 
 | Field | Why it matters |
 |---|---|
-| `cwd` | Without it, `gmux resume` can't return to the right directory. |
+| `cwd` | Without it, `gm resume` can't return to the right directory. |
 | `recentUserPrompts` | The summarizer's main evidence. **Only real human turns.** |
 | `arcPrompts` | An evenly-spaced sample of human turns across the WHOLE session, oldest first — `[0]` is the original ask. `recentUserPrompts` says how the work ended; this says what shape it had. Both feed the summarizer. |
 | `lastAssistantText` | Where the work ended up. |
@@ -50,7 +50,7 @@ Everything is nullable except `sessionId`, `updatedAt` and the flags. Set what y
 
 **Not every "user" message is a human turn.** Harnesses stuff tool results, system reminders, and slash-command envelopes into user-role records. If you let those through, they become the model's evidence and the summaries turn to mush. See `humanText()` in `claude-code.ts` for the filtering pattern — and apply it uniformly: the same filtered text must go into both `recentUserPrompts` and `arcPrompts`, never raw content into the arc. Use `DecimatingSampler` in `src/adapters/jsonl.ts` to build `arcPrompts` — it keeps the whole session's shape in bounded memory and never drops the first turn.
 
-**Your harness's headless mode creates real sessions.** gmux summarizes by shelling out to a model CLI — which, if that CLI is your harness, writes a new session containing gmux's own prompt. Set `isAutomated` for non-interactive runs (Claude Code marks them `entrypoint: "sdk-cli"`; Codex marks them `originator: "codex_exec"`) or the tool will pollute its own output.
+**Your harness's headless mode creates real sessions.** gm summarizes by shelling out to a model CLI — which, if that CLI is your harness, writes a new session containing gm's own prompt. Set `isAutomated` for non-interactive runs (Claude Code marks them `entrypoint: "sdk-cli"`; Codex marks them `originator: "codex_exec"`) or the tool will pollute its own output.
 
 ## Testing it
 
@@ -64,7 +64,7 @@ Add a fixture builder to `tests/fixtures/build.ts` that writes a small, *realist
 - a headless run sets `isAutomated`
 - `resumeCommand()` produces the argv you'd type yourself
 
-Point `GMUX_HOME` at a temp directory. Never read the real `~`.
+Point `GIGAMANAGE_HOME` at a temp directory. Never read the real `~`.
 
 ## Checklist
 
@@ -73,4 +73,4 @@ Point `GMUX_HOME` at a temp directory. Never read the real `~`.
 - [ ] fixture in `tests/fixtures/build.ts`
 - [ ] tests in `tests/adapters.test.ts`
 - [ ] `npm run check` passes
-- [ ] `gmux doctor` lists your harness
+- [ ] `gm doctor` lists your harness

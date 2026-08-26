@@ -1,5 +1,5 @@
 /**
- * The lifecycle of gmux's background agent — the `gmux watch` service that
+ * The lifecycle of gm's background agent — the `gm watch` service that
  * keeps pane labels and summaries current.
  *
  * A single global instance, tracked by a PID file, in the same spirit as the
@@ -19,7 +19,7 @@ import { cacheDir } from "../core/paths.js";
 export const WATCH_WORKER_COMMAND = "__watch";
 
 /** How often the watch loop repaints labels and re-checks divergence. */
-export const WATCH_INTERVAL_MS = Number(process.env.GMUX_WATCH_INTERVAL_MS) || 3000;
+export const WATCH_INTERVAL_MS = Number(process.env.GIGAMANAGE_WATCH_INTERVAL_MS) || 3000;
 
 export function watchPidPath(): string {
   return join(cacheDir(), "watch.pid");

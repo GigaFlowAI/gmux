@@ -1,7 +1,7 @@
 /**
  * The ask thread, on disk.
  *
- * `gmux ask`'s REPL keeps its turns in a closure and replays them, because the
+ * `gm ask`'s REPL keeps its turns in a closure and replays them, because the
  * providers we call are one-shot. The picker's chat cannot: every question is
  * answered by a fresh detached worker that exits when it is done, so there is no
  * closure left to hold anything. **The transcript file IS the turn array**, and
@@ -20,7 +20,7 @@
  *    and takes no lock, so it must be able to parse a file that is being
  *    appended to right now.
  *
- * Which is why **gmux must never truncate-and-rewrite a transcript**: a reader
+ * Which is why **gm must never truncate-and-rewrite a transcript**: a reader
  * would catch the file mid-rewrite and the pane would flash empty, or show the
  * previous answer. Appends are whole-line and ordered, so the only line a reader
  * can ever see torn is the last one — `parseTranscript` drops it and the next
@@ -50,7 +50,7 @@ import { runProviderCommand } from "./provider-process.js";
  * of the most recent turns is the bound.
  *
  * Bounded at the fold, deliberately: `buildAskPrompt` is shared with bare
- * `gmux ask`, which this design does not change.
+ * `gm ask`, which this design does not change.
  */
 export const ASK_MAX_REPLAY_TURNS = 8;
 
@@ -442,12 +442,12 @@ export async function sweepAskTranscripts(
  * makes the worker a process-group leader, which is the only thing that lets
  * `__ask-cancel` reap the provider underneath it. `spawn` does not kill its
  * child on POSIX, so a worker that merely exits leaves `claude -p` running and
- * billing. (`setsid` does not exist on macOS — gmux's own platform — so Node's
+ * billing. (`setsid` does not exist on macOS — gm's own platform — so Node's
  * `detached: true` is the portable equivalent; it calls `setsid(2)`.)
  *
- * `childEnv()`, not `process.env`: the worker is a `gmux` that is about to make a
+ * `childEnv()`, not `process.env`: the worker is a `gm` that is about to make a
  * model call, which is the definition of a child — its provider may shell back
- * into `gmux grep`, and that nested `gmux` must not start a summarize pass. The fzf
+ * into `gm grep`, and that nested `gm` must not start a summarize pass. The fzf
  * api key rides here by inheritance and nowhere else; it must never reach an
  * argv, where `ps` would hand it to any user on the box.
  */
@@ -455,9 +455,9 @@ export function askChildSpawnOptions(env: NodeJS.ProcessEnv = process.env): Spaw
   return {
     detached: true,
     stdio: "ignore",
-    // Belt and braces on top of GMUX_CHILD: the worker must never
+    // Belt and braces on top of GIGAMANAGE_CHILD: the worker must never
     // summarize, or every answer would fork a summarize pass from inside fzf.
-    env: { ...childEnv(env), GMUX_AUTO_SUMMARIZE: "0" },
+    env: { ...childEnv(env), GIGAMANAGE_AUTO_SUMMARIZE: "0" },
   };
 }
 
@@ -517,9 +517,9 @@ export interface StreamAnswerOptions {
  * pane until something else repaints it.
  *
  * **No `env` is passed to `runProviderCommand`, and that is load-bearing.** It
- * defaults to `childEnv()`, which is what stops the provider's `gmux grep` from
+ * defaults to `childEnv()`, which is what stops the provider's `gm grep` from
  * starting a summarize pass. A well-meant `env: { ...process.env, FZF_PORT }`
- * here would silently drop `GMUX_CHILD` and reopen the loop — which is why
+ * here would silently drop `GIGAMANAGE_CHILD` and reopen the loop — which is why
  * the port travels on the worker's argv instead, where the trap cannot be set.
  *
  * **The canceller owns the `aborted` record, not us.** On abort we write nothing

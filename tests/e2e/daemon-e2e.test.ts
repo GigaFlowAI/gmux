@@ -1,21 +1,21 @@
 /**
- * TRUE end-to-end test: a REAL `gmux daemon run` child process, driving a
+ * TRUE end-to-end test: a REAL `gm daemon run` child process, driving a
  * REAL (throwaway, isolated) tmux server over its own unix socket.
  *
  * Everything else in the suite (unit tests, `daemon-wiring.test.ts`, the
  * `FakeTmuxGateway`-backed integration tests) exercises the daemon's logic
  * headlessly. This file is the one place that proves the whole stack —
  * process spawn, `RealTmuxGateway`'s shelled-out `tmux` calls, the
- * `ModelServer` socket + snapshot file, and `@gmux_label` border painting —
+ * `ModelServer` socket + snapshot file, and `@gm_label` border painting —
  * actually works against a live tmux server.
  *
- * Gated behind `GMUX_E2E=1` (see the `test:e2e` npm script) so `npm test`
+ * Gated behind `GIGAMANAGE_E2E=1` (see the `test:e2e` npm script) so `npm test`
  * stays hermetic and fast: this suite is SKIPPED, not run, without the flag.
  * Also skipped if `tmux` isn't on PATH, so a bare CI image doesn't fail here.
  *
  * Isolation: a fresh `mkdtemp` XDG_CACHE_HOME (so the daemon's socket +
- * snapshot land under a throwaway `gmux/gmux/` tree) and a fresh tmux
- * server on its own `-S <sock>` — never the developer's real `~/.cache/gmux`
+ * snapshot land under a throwaway `gigamanage/daemon/` tree) and a fresh tmux
+ * server on its own `-S <sock>` — never the developer's real `~/.cache/gigamanage`
  * or default tmux server. The daemon is routed to the isolated tmux server
  * the same way a real shell would be: via the `TMUX=<sock>,<pid>,0` env var,
  * which makes its bare (`-S`-less) `tmux` invocations resolve to that server.
@@ -26,7 +26,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-const E2E = process.env.GMUX_E2E === "1";
+const E2E = process.env.GIGAMANAGE_E2E === "1";
 
 function tmuxAvailable(): boolean {
   try {
@@ -55,25 +55,25 @@ async function waitFor<T>(
 const PANE_STATES = ["working", "idle", "waiting", "error", "done"];
 const STATE_GLYPHS = ["●", "◔", "✗", "✓", "○"];
 
-describe.skipIf(!E2E || !tmuxAvailable())("gmux daemon e2e (real tmux + real daemon)", () => {
+describe.skipIf(!E2E || !tmuxAvailable())("gm daemon e2e (real tmux + real daemon)", () => {
   let cacheDir: string;
   let sock: string;
   let serverPid: string;
   let daemon: ChildProcess;
-  let gmuxSnapshotPath: () => string;
+  let daemonSnapshotPath: () => string;
 
-  const SESSION = "gmux-e2e";
+  const SESSION = "gm-e2e";
 
   beforeAll(async () => {
-    cacheDir = mkdtempSync(join(tmpdir(), "gmux-e2e-cache-"));
-    const tmuxDir = mkdtempSync(join(tmpdir(), "gmux-e2e-tmux-"));
+    cacheDir = mkdtempSync(join(tmpdir(), "gm-e2e-cache-"));
+    const tmuxDir = mkdtempSync(join(tmpdir(), "gm-e2e-tmux-"));
     sock = join(tmuxDir, "tmux.sock");
 
     // Point XDG_CACHE_HOME at the throwaway dir BEFORE importing the path
     // helpers, so the paths we assert against are exactly what the daemon
     // (spawned with the same env) will compute for itself.
     process.env.XDG_CACHE_HOME = cacheDir;
-    ({ gmuxSnapshotPath } = await import("../../src/core/paths.js"));
+    ({ daemonSnapshotPath } = await import("../../src/core/paths.js"));
 
     // A real, isolated tmux server: its own socket, never the user's default.
     execFileSync("tmux", ["-S", sock, "new-session", "-d", "-s", SESSION, "-x", "200", "-y", "50"]);
@@ -83,7 +83,7 @@ describe.skipIf(!E2E || !tmuxAvailable())("gmux daemon e2e (real tmux + real dae
     // Spawn the REAL daemon binary. TMUX=<sock>,<pid>,0 routes its bare
     // (no -S) `tmux` calls — what RealTmuxGateway shells out to — at the
     // isolated server above, never the developer's real one.
-    // GMUX_SUMMARY_CMD=false makes the LLM label provider a fast, failing
+    // GIGAMANAGE_SUMMARY_CMD=false makes the LLM label provider a fast, failing
     // no-op: the SemanticWorker swallows the failure and semantics stay
     // null, so the e2e never spawns a real `claude`/`codex` process.
     daemon = spawn(process.execPath, ["dist/cli/main.js", "daemon", "run"], {
@@ -92,7 +92,7 @@ describe.skipIf(!E2E || !tmuxAvailable())("gmux daemon e2e (real tmux + real dae
         ...process.env,
         XDG_CACHE_HOME: cacheDir,
         TMUX: `${sock},${serverPid},0`,
-        GMUX_SUMMARY_CMD: "false",
+        GIGAMANAGE_SUMMARY_CMD: "false",
       },
       stdio: "ignore",
     });
@@ -118,7 +118,7 @@ describe.skipIf(!E2E || !tmuxAvailable())("gmux daemon e2e (real tmux + real dae
     async () => {
       const snapshot = await waitFor(() => {
         try {
-          return JSON.parse(readFileSync(gmuxSnapshotPath(), "utf8"));
+          return JSON.parse(readFileSync(daemonSnapshotPath(), "utf8"));
         } catch {
           return null;
         }
@@ -143,7 +143,7 @@ describe.skipIf(!E2E || !tmuxAvailable())("gmux daemon e2e (real tmux + real dae
     async () => {
       const snapshot = await waitFor(() => {
         try {
-          return JSON.parse(readFileSync(gmuxSnapshotPath(), "utf8"));
+          return JSON.parse(readFileSync(daemonSnapshotPath(), "utf8"));
         } catch {
           return null;
         }
@@ -161,7 +161,7 @@ describe.skipIf(!E2E || !tmuxAvailable())("gmux daemon e2e (real tmux + real dae
     "paints real border labels onto the panes",
     async () => {
       const labels = await waitFor(() => {
-        const out = execFileSync("tmux", ["-S", sock, "list-panes", "-a", "-F", "#{@gmux_label}"])
+        const out = execFileSync("tmux", ["-S", sock, "list-panes", "-a", "-F", "#{@gm_label}"])
           .toString()
           .split("\n")
           .filter((line) => line.trim().length > 0);

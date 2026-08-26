@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { renderCockpit } from "../src/cli/gmux-render.js";
-import type { WorkspaceSnapshot } from "../src/core/gmux-types.js";
+import { renderCockpit } from "../src/cli/cockpit-render.js";
+import type { WorkspaceSnapshot } from "../src/core/workspace-types.js";
 
 const snap: WorkspaceSnapshot = { version: 1, updatedAt: 0, panes: [], hostPressure: null, guardianLog: [] };
 

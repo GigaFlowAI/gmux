@@ -1,7 +1,7 @@
 /**
- * The narrow surface where gmux shells out to `tmux`. The parsers are pure
+ * The narrow surface where gm shells out to `tmux`. The parsers are pure
  * (and tested); the two `run` wrappers are thin shells over documented tmux
- * flags, guarded at the edges by the `gmux doctor` version check.
+ * flags, guarded at the edges by the `gm doctor` version check.
  */
 
 import { execFile } from "node:child_process";
@@ -120,7 +120,7 @@ export async function sendKeys(paneId: string, keys: string): Promise<void> {
   await run("tmux", ["send-keys", "-t", paneId, "-l", keys], { timeout: TMUX_TIMEOUT_MS });
 }
 
-/** Set a per-pane option (e.g. `@gmux_label`). */
+/** Set a per-pane option (e.g. `@gm_label`). */
 export async function setPaneOption(paneId: string, name: string, value: string): Promise<void> {
   await run("tmux", ["set-option", "-p", "-t", paneId, name, value], { timeout: TMUX_TIMEOUT_MS });
 }

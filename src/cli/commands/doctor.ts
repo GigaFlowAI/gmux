@@ -1,10 +1,9 @@
-import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 
 import type { Command } from "commander";
 
 import { SCHEMA_VERSION } from "../../core/types.js";
-import { cacheDir, configPath, muxSocketPath } from "../../core/paths.js";
+import { cacheDir, configPath } from "../../core/paths.js";
 import { allAdapters } from "../../adapters/registry.js";
 import {
   AUTO_SUMMARIZE_LIMIT,
@@ -15,92 +14,17 @@ import { configExists, isChildProcess, readConfig } from "../../services/config.
 import { onPath } from "../../services/providers.js";
 import { defaultSummaryProvider } from "../../services/summarize.js";
 import { discover } from "../../services/index-store.js";
-import { tmuxVersion } from "../../services/tmux.js";
+import { supportsDisplayPopup, tmuxVersion } from "../../services/tmux.js";
 import { inspectTmuxBindings, realTmuxFs } from "./tmux.js";
 import { dim, green, jsonEnvelope, red, yellow } from "../format.js";
-import { findGmuxd, muxPidAlive, readMuxLock, type MuxLockFile } from "./spawn.js";
 
-export interface DoctorCheck {
+interface Check {
   name: string;
   ok: boolean;
   /** Not fatal — the tool still works, just less well. */
   optional?: boolean;
   detail: string;
   fix?: string;
-}
-
-type Check = DoctorCheck;
-
-/** Mux runtime: binary on disk, mux.sock, intel pid from the lock. */
-export function muxDoctorChecks(input: {
-  binaryPath: string | null;
-  socketPath: string;
-  socketUp: boolean;
-  lock: MuxLockFile | null;
-  pidAlive: (pid: number) => boolean;
-}): DoctorCheck[] {
-  const muxPid = input.lock?.muxPid ?? null;
-  const muxAlive = muxPid != null && input.pidAlive(muxPid);
-  const intelPid = input.lock?.intelPid ?? null;
-  const intelAlive = intelPid != null && input.pidAlive(intelPid);
-
-  return [
-    {
-      name: "gmuxd (mux binary)",
-      ok: input.binaryPath != null,
-      optional: true,
-      detail: input.binaryPath ? input.binaryPath : "not built — `gmux attach` needs target/debug/gmuxd",
-      ...(input.binaryPath ? {} : { fix: "Run `cargo build -p gmuxd` from the repo root." }),
-    },
-    {
-      name: "mux.sock",
-      ok: input.socketUp && muxAlive,
-      optional: true,
-      detail: input.socketUp
-        ? muxAlive
-          ? `${input.socketPath} (pid ${muxPid})`
-          : `${input.socketPath} exists but mux pid is not alive`
-        : `${input.socketPath} is down`,
-      ...(input.socketUp && muxAlive
-        ? {}
-        : { fix: "Run `gmux attach` or `gmux spawn` to start gmuxd." }),
-    },
-    {
-      name: "intel sidecar",
-      ok: intelAlive,
-      optional: true,
-      detail: intelAlive ? `up (pid ${intelPid})` : "down — peel still works; classify/pack will time out",
-      ...(intelAlive ? {} : { fix: "Start `gmux daemon --sidecar` (attach starts it)." }),
-    },
-    {
-      name: "ctrl+t in host emulator",
-      ok: true,
-      optional: true,
-      detail:
-        "gmux runs inside Ghostty/iTerm/kitty — if ctrl+t opens a native tab, unbind it there. The mux binding stays ctrl+t (ctrl+shift+t is an alias).",
-    },
-  ];
-}
-
-const TMUX_MIGRATE_FIX = "Finish work in tmux, then `gmux tmux uninstall` and `gmux attach`.";
-
-/** Leftover tmux is informational. cockpit/overlay always throw — never "overlay available". */
-export function leftoverTmuxCheck(tmuxV: { raw: string } | null): DoctorCheck {
-  if (!tmuxV) {
-    return {
-      name: "tmux (leftover)",
-      ok: true,
-      optional: true,
-      detail: "not found — using gmux attach",
-    };
-  }
-  return {
-    name: "tmux (leftover)",
-    ok: true,
-    optional: true,
-    detail: `${tmuxV.raw} — leftover. Finish work in tmux, then gmux tmux uninstall and gmux attach`,
-    fix: TMUX_MIGRATE_FIX,
-  };
 }
 
 /**
@@ -110,7 +34,7 @@ export function leftoverTmuxCheck(tmuxV: { raw: string } | null): DoctorCheck {
 export function registerDoctor(program: Command): void {
   program
     .command("doctor")
-    .description("check what gmux can see, and what's missing")
+    .description("check what gm can see, and what's missing")
     .option("--json", "emit JSON for scripts and agents")
     .action(async (options: { json?: boolean }) => {
       const checks: Check[] = [];
@@ -131,7 +55,7 @@ export function registerDoctor(program: Command): void {
       checks.push({
         name: "ripgrep (search)",
         ok: rg,
-        detail: rg ? "on PATH" : "missing — `gmux grep` will not work",
+        detail: rg ? "on PATH" : "missing — `gm grep` will not work",
         ...(rg ? {} : { fix: "brew install ripgrep" }),
       });
 
@@ -144,22 +68,34 @@ export function registerDoctor(program: Command): void {
         ...(fzf ? {} : { fix: "brew install fzf" }),
       });
 
-      checks.push(leftoverTmuxCheck(await tmuxVersion()));
+      const tmuxV = await tmuxVersion();
+      const tmuxOk = supportsDisplayPopup(tmuxV);
+      checks.push({
+        name: "tmux (peek overlay)",
+        ok: tmuxOk,
+        optional: true,
+        detail: tmuxV
+          ? tmuxOk
+            ? `${tmuxV.raw} — \`ctrl+g\` overlay available`
+            : `${tmuxV.raw} — too old; the overlay needs tmux >= 3.2`
+          : "not found — the tmux overlay (`gm tmux install`) is unavailable",
+        ...(tmuxOk
+          ? {}
+          : { fix: tmuxV ? "Upgrade tmux to 3.2 or newer." : "brew install tmux, then `gm tmux install`." }),
+      });
 
       const bindings = inspectTmuxBindings(homedir(), realTmuxFs());
-      const bindingsMigrated = !bindings.installed && !bindings.leftoverLegacy;
+      const bindingsOk = bindings.installed && !bindings.leftoverLegacy;
       checks.push({
         name: "tmux bindings",
-        ok: bindingsMigrated,
+        ok: bindingsOk,
         optional: true,
-        detail: bindings.leftoverLegacy
-          ? `installed in ${bindings.targetPath} but shadowed by leftover gigamanage bindings`
-          : bindings.installed
-            ? `installed in ${bindings.targetPath} — finish in tmux, then gmux tmux uninstall`
-            : "not installed — using gmux attach",
-        ...(bindingsMigrated
-          ? {}
-          : { fix: "Finish work in tmux, then `gmux tmux uninstall` and `gmux attach`." }),
+        detail: !bindings.installed
+          ? "not installed — ctrl-g will not open the cockpit"
+          : bindings.leftoverLegacy
+            ? `installed in ${bindings.targetPath} but shadowed by leftover gigamanage bindings`
+            : `installed in ${bindings.targetPath}`,
+        ...(bindingsOk ? {} : { fix: "gm tmux install  (or re-run `gm setup`)" }),
       });
       if (bindings.leftoverLegacy) {
         checks.push({
@@ -167,35 +103,24 @@ export function registerDoctor(program: Command): void {
           ok: false,
           optional: true,
           detail: "old # >>> gigamanage >>> block still present — ctrl-g may open `gm overlay`",
-          fix: "`gmux tmux uninstall` strips it, or delete the # >>> gigamanage >>> block from ~/.tmux.conf / ~/.tmux.conf.local",
+          fix: "gm tmux install  (migrates the old block) or delete the # >>> gigamanage >>> block from ~/.tmux.conf / ~/.tmux.conf.local",
         });
       }
-
-      const lock = await readMuxLock();
-      checks.push(
-        ...muxDoctorChecks({
-          binaryPath: findGmuxd(),
-          socketPath: muxSocketPath(),
-          socketUp: existsSync(muxSocketPath()),
-          lock,
-          pidAlive: muxPidAlive,
-        }),
-      );
 
       // Config first: it explains every provider answer below it.
       const config = await readConfig();
       const hasConfigFile = await configExists();
       checks.push({
         name: "config",
-        // Absent config is fine — gmux autodetects. A file we couldn't parse is not.
+        // Absent config is fine — gm autodetects. A file we couldn't parse is not.
         ok: !hasConfigFile || config !== null,
         optional: true,
         detail: !hasConfigFile
-          ? "none yet — gmux autodetects a provider. `gmux setup` makes the choice explicit"
+          ? "none yet — gm autodetects a provider. `gm setup` makes the choice explicit"
           : config === null
             ? "unreadable — ignoring it and autodetecting instead"
             : `${configPath()}`,
-        ...(hasConfigFile && config === null ? { fix: "Run `gmux setup` to rewrite it." } : {}),
+        ...(hasConfigFile && config === null ? { fix: "Run `gm setup` to rewrite it." } : {}),
       });
 
       const provider = await defaultSummaryProvider();
@@ -208,8 +133,8 @@ export function registerDoctor(program: Command): void {
           ? "none — this machine is configured to make no model calls"
           : providerOk
             ? "on PATH"
-            : "missing — `gmux summarize` and `gmux ask` will not work",
-        ...(providerOk ? {} : { fix: "Run `gmux setup` to choose a provider." }),
+            : "missing — `gm summarize` and `gm ask` will not work",
+        ...(providerOk ? {} : { fix: "Run `gm setup` to choose a provider." }),
       });
 
       // Background model calls spend tokens, so make it visible that they happen
@@ -219,11 +144,11 @@ export function registerDoctor(program: Command): void {
       const nested = isChildProcess();
       const autoOn = envOn && configOn && !nested;
       const offReason = !envOn
-        ? "off (GMUX_AUTO_SUMMARIZE=0)"
+        ? "off (GIGAMANAGE_AUTO_SUMMARIZE=0)"
         : !configOn
-          ? "off (you declined it in `gmux setup`)"
+          ? "off (you declined it in `gm setup`)"
           : nested
-            ? "off (this gmux was spawned by gmux's own provider)"
+            ? "off (this gm was spawned by gm's own provider)"
             : "";
       checks.push({
         name: "auto-summarize (background)",
@@ -238,12 +163,12 @@ export function registerDoctor(program: Command): void {
           ? {}
           : {
               fix: !envOn
-                ? "Unset GMUX_AUTO_SUMMARIZE to let gmux keep recent sessions summarized."
+                ? "Unset GIGAMANAGE_AUTO_SUMMARIZE to let gm keep recent sessions summarized."
                 : !configOn
-                  ? "Run `gmux setup` to turn it back on."
+                  ? "Run `gm setup` to turn it back on."
                   : nested
-                    ? "Nothing to do — this is the guard that stops gmux summarizing its own summarizer."
-                    : "Run `gmux setup` to choose a provider, or `gmux --no-auto-summarize` to silence this.",
+                    ? "Nothing to do — this is the guard that stops gm summarizing its own summarizer."
+                    : "Run `gm setup` to choose a provider, or `gm --no-auto-summarize` to silence this.",
             }),
       });
 
@@ -265,7 +190,7 @@ export function registerDoctor(program: Command): void {
         name: "sessions visible",
         ok: total > 0,
         detail: `${total} total`,
-        ...(total > 0 ? {} : { fix: "Run an agent session first, or check GMUX_HOME." }),
+        ...(total > 0 ? {} : { fix: "Run an agent session first, or check GIGAMANAGE_HOME." }),
       });
 
       if (options.json) {

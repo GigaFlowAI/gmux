@@ -61,7 +61,7 @@ describe("cache staleness", () => {
 
 describe("read/write round-trip", () => {
   let dir: string;
-  beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "gmux-wv-")); process.env.XDG_CACHE_HOME = dir; });
+  beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "gm-wv-")); process.env.XDG_CACHE_HOME = dir; });
   afterEach(() => { delete process.env.XDG_CACHE_HOME; });
   it("writes then reads the same view", async () => {
     const view: WorkView = {
@@ -97,7 +97,7 @@ describe("generateWorkView", () => {
 });
 
 describe("buildWorkViews", () => {
-  beforeEach(async () => { const d = await mkdtemp(join(tmpdir(), "gmux-wvb-")); process.env.XDG_CACHE_HOME = d; });
+  beforeEach(async () => { const d = await mkdtemp(join(tmpdir(), "gm-wvb-")); process.env.XDG_CACHE_HOME = d; });
   afterEach(() => { delete process.env.XDG_CACHE_HOME; });
 
   const r2: SessionRecord = { ...record, sessionId: "s2" };

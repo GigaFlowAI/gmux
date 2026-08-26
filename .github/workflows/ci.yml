@@ -23,7 +23,7 @@ jobs:
 
       - run: npm ci
 
-      # `gmux grep` shells out to ripgrep, and the search tests exercise it for
+      # `gm grep` shells out to ripgrep, and the search tests exercise it for
       # real rather than mocking it. Not preinstalled on the runner.
       - name: Install ripgrep
         run: sudo apt-get update && sudo apt-get install -y ripgrep
@@ -41,16 +41,3 @@ jobs:
 
       - name: Build
         run: npm run build
-
-  mux:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      # Separate from npm test: gmuxd (crates/mux) is the PTY runtime.
-      - name: Test gmuxd
-        run: cargo test -p gmuxd

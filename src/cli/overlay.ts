@@ -80,7 +80,7 @@ function summaryCard(cell: OverlayCell, w: number, h: number, now: Date): string
     body.push(...section("STILL OPEN", summary.open, w));
     body.push(...section("NEXT STEP", summary.nextStep, w));
   } else {
-    body.push("no summary yet — gmux summarize " + record.sessionId.slice(0, 8));
+    body.push("no summary yet — gm summarize " + record.sessionId.slice(0, 8));
   }
   return body.slice(0, h);
 }

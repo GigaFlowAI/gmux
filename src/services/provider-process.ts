@@ -2,7 +2,7 @@
  * Running a provider CLI: prompt in on stdin, text out on stdout.
  *
  * The whole vendor abstraction lives here. Both consumers — summaries and
- * `gmux ask` — spawn the same way and differ only in argv and timeout, so the
+ * `gm ask` — spawn the same way and differ only in argv and timeout, so the
  * spawn, the timeout, the kill and the stderr capture are written once.
  *
  * Errors are plain `Error`s with a readable message; callers wrap them in their
@@ -19,9 +19,9 @@ export interface RunProviderOptions {
   /**
    * Environment for the child.
    *
-   * Defaults to `childEnv()` — ours plus GMUX_CHILD=1 — because every
-   * provider we spawn is an agent that may shell back into `gmux`, and a nested
-   * `gmux` must not start a background summarize pass of its own.
+   * Defaults to `childEnv()` — ours plus GIGAMANAGE_CHILD=1 — because every
+   * provider we spawn is an agent that may shell back into `gm`, and a nested
+   * `gm` must not start a background summarize pass of its own.
    */
   env?: NodeJS.ProcessEnv;
   /**
@@ -33,7 +33,7 @@ export interface RunProviderOptions {
    * answer from the resolved string without a late chunk racing it.
    *
    * A tee, not a mechanism. `claude -p` buffers, so against it this fires
-   * exactly once — but gmux is provider-agnostic, and a provider that trickles
+   * exactly once — but gm is provider-agnostic, and a provider that trickles
    * gets incremental rendering out of it for free, with no second code path.
    */
   onChunk?: (text: string) => void;
@@ -134,7 +134,7 @@ export async function runProviderCommand(
 
     // EPIPE: a provider that exits before reading its prompt would otherwise
     // take the whole process down with an unhandled error event, turning a
-    // provider bug into a gmux crash.
+    // provider bug into a gm crash.
     child.stdin.on("error", () => {});
     child.stdin.write(prompt);
     child.stdin.end();

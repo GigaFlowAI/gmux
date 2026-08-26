@@ -1,11 +1,11 @@
 /**
- * `gmux ask` — ask questions about your sessions.
+ * `gm ask` — ask questions about your sessions.
  *
  * Two shapes, one implementation:
  *
- *   gmux ask                  a REPL. What ctrl-o in the picker opens.
- *   gmux ask "<question>"     one-shot, for a shell or an agent.
- *   gmux ask "<q>" --json     the same, parseable.
+ *   gm ask                  a REPL. What ctrl-o in the picker opens.
+ *   gm ask "<question>"     one-shot, for a shell or an agent.
+ *   gm ask "<q>" --json     the same, parseable.
  *
  * The one-shot is not a convenience — non-negotiable #4 says every read command
  * supports `--json`, and an agent can only use what it can parse.
@@ -14,7 +14,7 @@
 import { createInterface } from "node:readline/promises";
 import type { Command } from "commander";
 
-import { GmuxError, NoProviderError } from "../../core/errors.js";
+import { GigamanageError, NoProviderError } from "../../core/errors.js";
 import {
   SCHEMA_VERSION,
   type AskContext,
@@ -43,7 +43,7 @@ export interface AskOptions extends LsOptions {
   json?: boolean;
 }
 
-/** How many sessions had a summary — the honest measure of how much gmux knows. */
+/** How many sessions had a summary — the honest measure of how much gm knows. */
 export function summarizedCount(context: AskContext): number {
   return context.sessions.filter((v) => v.summary !== null).length;
 }
@@ -57,11 +57,11 @@ export function summarizedCount(context: AskContext): number {
  */
 export function thinContextNotice(context: AskContext): string | null {
   const total = context.sessions.length;
-  if (total === 0) return "No sessions indexed. `gmux doctor` will say why.";
+  if (total === 0) return "No sessions indexed. `gm doctor` will say why.";
 
   const summarized = summarizedCount(context);
   if (summarized === 0) {
-    return "None of these sessions is summarized yet — answers will be thin. `gmux summarize` writes them.";
+    return "None of these sessions is summarized yet — answers will be thin. `gm summarize` writes them.";
   }
   if (summarized < total / 2) {
     return `Only ${summarized} of ${total} sessions are summarized — answers may be thin.`;
@@ -105,20 +105,20 @@ async function windowViews(windowId: string): Promise<SessionView[]> {
  *
  * Three different answers, and they must stay three:
  *
- * - configured "none"   -> a decision to revisit (`gmux setup`)
+ * - configured "none"   -> a decision to revisit (`gm setup`)
  * - configured, missing -> a binary to install, named by its own name
  * - present            -> go
  *
- * The availability check mirrors what `gmux summarize` already does. Without it a
+ * The availability check mirrors what `gm summarize` already does. Without it a
  * user who picked Codex and never installed it gets a raw `spawn codex ENOENT`
  * from deep inside the spawn, which is not an error that carries its fix.
  */
 async function resolveProvider(): Promise<AskProvider> {
   const provider = await defaultAskProvider();
-  if (!provider) throw new NoProviderError("`gmux ask`");
+  if (!provider) throw new NoProviderError("`gm ask`");
   if (!(await provider.isAvailable())) {
-    throw new GmuxError(`Ask provider "${provider.name}" is not on your PATH.`, {
-      fix: "Run `gmux setup` to choose a provider that is installed.",
+    throw new GigamanageError(`Ask provider "${provider.name}" is not on your PATH.`, {
+      fix: "Run `gm setup` to choose a provider that is installed.",
       exitCode: 6,
     });
   }
@@ -137,7 +137,7 @@ async function resolveProvider(): Promise<AskProvider> {
  * With no interface open, those keystrokes stay in the tty buffer and are
  * delivered to the next `question()` instead of being lost. Same reason the
  * picker closes its readline before opening the chat, and the same trap that
- * made `gmux setup` require a TTY.
+ * made `gm setup` require a TTY.
  *
  * Returns null on ctrl-d, which rejects the promise rather than resolving it.
  */
@@ -164,7 +164,7 @@ async function repl(context: AskContext, provider: AskProvider): Promise<void> {
 
   const notice = thinContextNotice(context);
   process.stdout.write(
-    `\n${bold("gmux ask")} ${dim(
+    `\n${bold("gm ask")} ${dim(
       `— ${context.sessions.length} recent session${context.sessions.length === 1 ? "" : "s"} loaded, ${summarizedCount(context)} summarized · ${provider.name}`,
     )}\n`,
   );
@@ -203,14 +203,14 @@ export async function askAboutSessions(options: AskOptions): Promise<void> {
     const provider = await resolveProvider();
     await repl(await loadContext(options), provider);
   } catch (error) {
-    const fix = error instanceof GmuxError ? error.fix : undefined;
+    const fix = error instanceof GigamanageError ? error.fix : undefined;
     process.stdout.write(`\n${yellow((error as Error).message)}\n`);
     if (fix) process.stdout.write(`${dim(fix)}\n`);
   }
 }
 
 /**
- * Whether `gmux ask` would work right now.
+ * Whether `gm ask` would work right now.
  *
  * The picker asks before advertising ctrl-o. A key that opens a chat which
  * immediately dies — and, under fzf, gets repainted over before you can read
@@ -235,7 +235,7 @@ export function registerAsk(program: Command): void {
     .option("-n, --limit <count>", "how many recent sessions to consider", String(ASK_SESSION_LIMIT))
     // These two exist because the picker forwards them: ctrl-o reproduces the
     // filter set the list was opened with, and an option the child does not
-    // declare is one commander rejects outright — so `gmux pick --include-automated`
+    // declare is one commander rejects outright — so `gm pick --include-automated`
     // would bind a ctrl-o that dies on "unknown option".
     .option("--include-sidechains", "include subagent transcripts")
     .option("--include-automated", "include non-interactive runs (claude -p, codex exec)")
@@ -248,8 +248,8 @@ export function registerAsk(program: Command): void {
         if (options.json) {
           // A REPL cannot emit an envelope. Failing loudly beats handing an
           // agent an interactive process that looks like a hang.
-          throw new GmuxError("`gmux ask --json` needs a question.", {
-            fix: 'Pass one: gmux ask "what should I pick up?" --json',
+          throw new GigamanageError("`gm ask --json` needs a question.", {
+            fix: 'Pass one: gm ask "what should I pick up?" --json',
             exitCode: 2,
           });
         }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SemanticGate } from "../src/services/semantic-gate.js";
-import type { Observation } from "../src/core/gmux-types.js";
+import type { Observation } from "../src/core/workspace-types.js";
 
 const obs = (lines: string[], ts: number): Observation => ({ paneId: "%1", kind: "terminal", ts, tailLines: lines, lastActivityTs: ts });
 

@@ -3,7 +3,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { WorkspaceModel } from "./workspace.js";
-import { gmuxSnapshotPath, gmuxSocketPath } from "../core/paths.js";
+import { daemonSnapshotPath, daemonSocketPath } from "../core/paths.js";
 
 export class ModelServer {
   private server: Server | undefined;
@@ -17,8 +17,8 @@ export class ModelServer {
 
   constructor(
     private readonly model: WorkspaceModel,
-    private readonly socketPath: string = gmuxSocketPath(),
-    private readonly snapshotPath: string = gmuxSnapshotPath(),
+    private readonly socketPath: string = daemonSocketPath(),
+    private readonly snapshotPath: string = daemonSnapshotPath(),
   ) {}
 
   async start(): Promise<void> {

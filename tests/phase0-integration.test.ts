@@ -7,7 +7,7 @@ import { WorkspaceModel } from "../src/services/workspace.js";
 import { Daemon } from "../src/services/daemon.js";
 import { ModelServer } from "../src/services/daemon-socket.js";
 import { subscribe } from "../src/services/daemon-client.js";
-import type { WorkspaceSnapshot } from "../src/core/gmux-types.js";
+import type { WorkspaceSnapshot } from "../src/core/workspace-types.js";
 import type { Sensor } from "../src/services/sensors.js";
 
 let server: ModelServer | undefined;
@@ -20,9 +20,9 @@ class ActiveSensor implements Sensor {
   async teardown() {}
 }
 
-describe("gmux phase 0 — always-on loop", () => {
+describe("gm phase 0 — always-on loop", () => {
   it("a pane's state reaches a socket subscriber without any LLM", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "gmux-"));
+    const dir = mkdtempSync(join(tmpdir(), "gm-"));
     const sock = join(dir, "d.sock");
     const snap = join(dir, "snap.json");
     const gw = new FakeTmuxGateway();

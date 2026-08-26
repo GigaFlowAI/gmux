@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 
-import { GmuxError, NoProviderError } from "../../core/errors.js";
+import { GigamanageError, NoProviderError } from "../../core/errors.js";
 import { loadRecords } from "../../services/views.js";
 import { resolveSession } from "../../services/resolve.js";
 import { defaultSummaryProvider, summarizeBatch } from "../../services/summarize.js";
@@ -23,10 +23,10 @@ export function registerSummarize(program: Command): void {
         // Two different "no", and they need two different answers: "you chose
         // none" is a decision to revisit, "it isn't installed" is a thing to fix.
         const provider = await defaultSummaryProvider();
-        if (!provider) throw new NoProviderError("`gmux summarize`");
+        if (!provider) throw new NoProviderError("`gm summarize`");
         if (!(await provider.isAvailable())) {
-          throw new GmuxError(`Summary provider "${provider.name}" is not on your PATH.`, {
-            fix: "Run `gmux setup` to choose a provider that is installed.",
+          throw new GigamanageError(`Summary provider "${provider.name}" is not on your PATH.`, {
+            fix: "Run `gm setup` to choose a provider that is installed.",
             exitCode: 6,
           });
         }

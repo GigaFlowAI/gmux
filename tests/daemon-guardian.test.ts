@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FakeTmuxGateway } from "./fixtures/fake-gateway.js";
-import { FakeMuxGateway } from "../src/services/mux-gateway.js";
 import { WorkspaceModel } from "../src/services/workspace.js";
 import { Daemon } from "../src/services/daemon.js";
-import { SidecarDaemon } from "../src/services/sidecar-daemon.js";
 import { ResourceMonitor } from "../src/services/resources.js";
 import { Guardian } from "../src/services/guardian.js";
 import type { Sensor } from "../src/services/sensors.js";
@@ -37,78 +35,5 @@ describe("daemon guardian integration", () => {
     expect(snap.hostPressure!.usedRatio).toBe(0.95);
     expect(snap.guardianLog.length).toBe(1);
     expect(gw.sent.length).toBeGreaterThan(0);
-  });
-
-  it("sidecar broadcasts via guardian.broadcast, never pane.send_keys", async () => {
-    const gw = new FakeMuxGateway();
-    const spawned = await gw.spawn({ cwd: "/x/webshop", argv: ["node"] });
-    const panes = await gw.listPanes();
-    const pid = panes[0]!.pid;
-    const broadcasts: string[] = [];
-    const d = new SidecarDaemon({
-      gateway: gw,
-      model: new WorkspaceModel(),
-      now: () => 100_000,
-      makeSensor: (id) => new Busy(id),
-      resources: new ResourceMonitor({
-        psSnapshot: async () => `  PID  PPID    RSS COMM\n  ${pid}     1  9000000 node\n`,
-        hostMemory: async () => ({ usedRatio: 0.95, usedBytes: 32e9 }),
-      }),
-      guardian: new Guardian({ policy: "auto", threshold: 0.9, cooldownSeconds: 300 }),
-      resolveAgents: (present) => present.map((p) => p.paneId),
-      broadcast: async (message) => { broadcasts.push(message); },
-    });
-    await d.tickOnce();
-    expect(gw.sent).toEqual([]);
-    expect(broadcasts.length).toBeGreaterThan(0);
-    expect(broadcasts[0]).not.toMatch(/window `/);
-    expect(spawned.paneId).toBeTruthy();
-  });
-
-  it("reports harness and sessionId onto mux before broadcast", async () => {
-    const gw = new FakeMuxGateway();
-    await gw.spawn({ cwd: "/x/webshop", argv: ["node"] });
-    const panes = await gw.listPanes();
-    const pid = panes[0]!.pid;
-    const patches: Array<{ harness?: string | null; sessionId?: string | null }> = [];
-    const broadcasts: string[] = [];
-    const d = new SidecarDaemon({
-      gateway: gw,
-      model: new WorkspaceModel(),
-      now: () => 100_000,
-      makeSensor: (id) => new Busy(id),
-      resources: new ResourceMonitor({
-        psSnapshot: async () => `  PID  PPID    RSS COMM\n  ${pid}     1  9000000 node\n`,
-        hostMemory: async () => ({ usedRatio: 0.95, usedBytes: 32e9 }),
-      }),
-      guardian: new Guardian({ policy: "auto", threshold: 0.9, cooldownSeconds: 300 }),
-      resolveAgents: (present) => present.map((p) => p.paneId),
-      report: async (patch) => { patches.push(patch); },
-      broadcast: async (message) => { broadcasts.push(message); },
-    });
-    await d.tickOnce();
-    expect(patches.some((p) => p.harness === "test-agent" && Boolean(p.sessionId))).toBe(true);
-    expect(broadcasts.length).toBeGreaterThan(0);
-  });
-
-  it("does not invent a broadcast when intel is down (no broadcast hook)", async () => {
-    const gw = new FakeMuxGateway();
-    await gw.spawn({ cwd: "/x/webshop", argv: ["node"] });
-    const panes = await gw.listPanes();
-    const pid = panes[0]!.pid;
-    const d = new SidecarDaemon({
-      gateway: gw,
-      model: new WorkspaceModel(),
-      now: () => 100_000,
-      makeSensor: (id) => new Busy(id),
-      resources: new ResourceMonitor({
-        psSnapshot: async () => `  PID  PPID    RSS COMM\n  ${pid}     1  9000000 node\n`,
-        hostMemory: async () => ({ usedRatio: 0.95, usedBytes: 32e9 }),
-      }),
-      guardian: new Guardian({ policy: "auto", threshold: 0.9, cooldownSeconds: 300 }),
-      resolveAgents: (present) => present.map((p) => p.paneId),
-    });
-    await d.tickOnce();
-    expect(gw.sent).toEqual([]);
   });
 });

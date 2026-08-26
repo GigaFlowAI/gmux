@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { classifyState } from "../src/core/pane-state.js";
-import type { Observation } from "../src/core/gmux-types.js";
+import type { Observation } from "../src/core/workspace-types.js";
 
 const base: Observation = { paneId: "%1", kind: "agent", ts: 1000, tailLines: [], lastActivityTs: 1000 };
 

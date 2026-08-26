@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import { formatBytes } from "../core/bytes.js";
-import type { GuardianPolicy, HostPressure, PaneEntry } from "../core/gmux-types.js";
+import type { GuardianPolicy, HostPressure, PaneEntry } from "../core/workspace-types.js";
 
 export interface GuardianDecision {
   action: "broadcast" | "notify" | "log-only" | "none";
@@ -80,19 +80,8 @@ function topConsumer(panes: PaneEntry[], host: HostPressure): { culprit: string 
   if (!best || host.unattributed > bestRss) {
     return { culprit: null, label: "a source outside tracked panes" };
   }
-  const name = culpritName(best);
-  const noun = best.identity.tabId && !cwdBasename(best.identity.cwd) ? "tab" : "pane";
+  const name = best.identity.cwd ? basename(best.identity.cwd) : best.identity.command;
   // Shared with the cockpit's memory column so the same pane shows the same
-  // figure in both places. Mux has no tmux windows — name the pane/tab.
-  return { culprit: best.identity.paneId, label: `${noun} \`${name}\` (${formatBytes(bestRss)})` };
-}
-
-function cwdBasename(cwd: string): string {
-  if (!cwd) return "";
-  const base = basename(cwd);
-  return base === "/" || base === "." ? "" : base;
-}
-
-function culpritName(pane: PaneEntry): string {
-  return cwdBasename(pane.identity.cwd) || pane.identity.tabId || pane.identity.command;
+  // figure in both places.
+  return { culprit: best.identity.paneId, label: `window \`${name}\` (${formatBytes(bestRss)})` };
 }

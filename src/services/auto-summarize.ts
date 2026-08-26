@@ -1,8 +1,8 @@
 /**
- * Auto-summarize: keep the top of `gmux ls` written, without ever making you wait.
+ * Auto-summarize: keep the top of `gm ls` written, without ever making you wait.
  *
  * A summary costs a model call (~8s). Ten of them, inline, would turn a 60ms
- * `gmux ls` into a minute of staring at a cursor — so the foreground command never
+ * `gm ls` into a minute of staring at a cursor — so the foreground command never
  * runs one. Instead it decides *what* would need summarizing, hands that job to
  * a DETACHED child process, prints a one-line notice to stderr and exits. The
  * summaries land in the cache and appear on the next run.
@@ -13,13 +13,13 @@
  *    unref'd, so it outlives its parent and the parent's event loop drains
  *    immediately. Nothing is awaited.
  *
- * 2. **A stampede.** Five `gmux ls` in a row must not start five summarizers doing
+ * 2. **A stampede.** Five `gm ls` in a row must not start five summarizers doing
  *    identical work. A lock file in the cache dir is created with O_EXCL before
  *    spawning; a lock whose owner is dead — or older than LOCK_STALE_MS — is
  *    taken over. A short cooldown stops us re-deciding on every invocation.
  *
  * 3. **A feedback loop.** The provider is `claude -p`, which itself writes a new
- *    Claude Code session to disk. If those were eligible targets, gmux
+ *    Claude Code session to disk. If those were eligible targets, gm
  *    would summarize its own summarizer forever. `automated` and `sidechain`
  *    sessions are therefore excluded from the target set — see
  *    `autoSummarizeCandidates`, which is where that guarantee lives.
@@ -44,18 +44,18 @@ import { loadRecords } from "./views.js";
 /**
  * How many recent sessions the background pass keeps summarized.
  *
- * This MUST be at least as large as `gmux ls`'s default limit, or the bottom of
+ * This MUST be at least as large as `gm ls`'s default limit, or the bottom of
  * the default view is permanently `○` and the feature looks broken — which is
- * exactly what happened when this was 10 and `gmux ls` showed 20.
+ * exactly what happened when this was 10 and `gm ls` showed 20.
  *
- * Override with `GMUX_AUTO_SUMMARIZE=<n>`.
+ * Override with `GIGAMANAGE_AUTO_SUMMARIZE=<n>`.
  */
 export const AUTO_SUMMARIZE_LIMIT = 20;
 
 /**
  * Hard ceiling on one background pass.
  *
- * `gmux ls -n 500` should not fire 500 model calls. Anything beyond this is left
+ * `gm ls -n 500` should not fire 500 model calls. Anything beyond this is left
  * for the next run, and we say so rather than truncating silently.
  */
 export const MAX_PER_PASS = 50;
@@ -63,7 +63,7 @@ export const MAX_PER_PASS = 50;
 /** A lock older than this belongs to a process that died without cleaning up. */
 export const LOCK_STALE_MS = 10 * 60_000;
 
-/** Don't re-decide on every invocation; `gmux ls` in a loop should cost nothing. */
+/** Don't re-decide on every invocation; `gm ls` in a loop should cost nothing. */
 export const COOLDOWN_MS = 60_000;
 
 /** The hidden CLI command the detached worker runs. It never auto-summarizes itself. */
@@ -88,13 +88,13 @@ export function logPath(): string {
 }
 
 /**
- * Off via `GMUX_AUTO_SUMMARIZE=0`.
+ * Off via `GIGAMANAGE_AUTO_SUMMARIZE=0`.
  *
  * Background model calls spend tokens. A user who has not opted into that must
  * be able to say no once, in their shell profile, and be done with it.
  */
 export function autoSummarizeEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = env["GMUX_AUTO_SUMMARIZE"];
+  const raw = env["GIGAMANAGE_AUTO_SUMMARIZE"];
   if (raw == null || raw.trim() === "") return true;
   return !["0", "false", "off", "no"].includes(raw.trim().toLowerCase());
 }
@@ -105,10 +105,10 @@ export function autoSummarizeEnabled(env: NodeJS.ProcessEnv = process.env): bool
  * Three independent "no"s, and any of them is final:
  *
  * - the env var — a shell-profile opt-out
- * - the config — what the user answered in `gmux setup`
- * - GMUX_CHILD — we are a `gmux` spawned by our own provider
+ * - the config — what the user answered in `gm setup`
+ * - GIGAMANAGE_CHILD — we are a `gm` spawned by our own provider
  *
- * The last is the one that isn't obvious. `gmux ask`'s provider may run `gmux grep`,
+ * The last is the one that isn't obvious. `gm ask`'s provider may run `gm grep`,
  * whose postAction hook would start a summarize pass — a model call spawned by a
  * model call. The lock would absorb most of the damage; this makes it a
  * non-question.
@@ -180,7 +180,7 @@ async function createLockExclusive(lock: AutoSummarizeLock): Promise<boolean> {
 /**
  * Take the lock, or report that someone else holds it.
  *
- * The create is O_EXCL, so two `gmux` processes racing cannot both win. A stale
+ * The create is O_EXCL, so two `gm` processes racing cannot both win. A stale
  * lock is removed and re-created rather than overwritten, so the takeover is
  * itself a race whose loser backs off instead of double-spawning.
  */
@@ -314,7 +314,7 @@ export interface MaybeAutoSummarizeOptions {
   /**
    * The sessions the command just displayed.
    *
-   * Passing these is what makes `gmux ls -n 50` summarize all fifty: the window
+   * Passing these is what makes `gm ls -n 50` summarize all fifty: the window
    * follows what you actually looked at, rather than a fixed top-N that leaves
    * the bottom of your screen permanently un-summarized.
    */
@@ -325,12 +325,12 @@ export interface MaybeAutoSummarizeOptions {
    * Skip the cooldown — and only the cooldown.
    *
    * Set when the user explicitly asked for a refresh (ctrl-r in the picker).
-   * The cooldown guards against *incidental* re-decisions, like `gmux ls` in a
+   * The cooldown guards against *incidental* re-decisions, like `gm ls` in a
    * loop; a keypress is not incidental, and a key that silently does nothing
    * for its first minute reads as broken.
    *
    * The lock still applies, so hammering the key cannot start two workers, and
-   * `GMUX_AUTO_SUMMARIZE=0` still wins: force overrides our own
+   * `GIGAMANAGE_AUTO_SUMMARIZE=0` still wins: force overrides our own
    * optimisation, never the user's opt-out.
    */
   force?: boolean;
@@ -369,17 +369,17 @@ async function decide(options: MaybeAutoSummarizeOptions): Promise<AutoSummarize
 
   if (options.enabled === false || !(await autoSummarizeAllowedNow())) return none("disabled");
 
-  // Cheapest checks first: two small file reads keep a repeated `gmux ls` free.
+  // Cheapest checks first: two small file reads keep a repeated `gm ls` free.
   if (options.force !== true && (await inCooldown(now))) return none("cooling-down");
   const held = await readLock();
   if (held && !isLockStale(held, now)) return none("locked");
 
   // A missing model is not an error — it just means no summaries today. Nor is
-  // a null provider: that is `gmux setup`'s "none" being honored.
+  // a null provider: that is `gm setup`'s "none" being honored.
   const provider = options.provider ?? (await defaultSummaryProvider());
   if (!provider || !(await provider.isAvailable())) return none("no-provider");
 
-  // The window follows what was displayed. With nothing passed (e.g. `gmux show`),
+  // The window follows what was displayed. With nothing passed (e.g. `gm show`),
   // fall back to the default recent window.
   const records = options.records ?? (await loadRecords({ limit: AUTO_SUMMARIZE_LIMIT }));
   const limit = Math.max(AUTO_SUMMARIZE_LIMIT, records.length);
@@ -438,7 +438,7 @@ function spawnWorker(): number | undefined {
     stdio: "ignore",
     // Belt and braces: the worker must never auto-summarize, or it would spawn a
     // grandchild for every summary it writes.
-    env: { ...process.env, GMUX_AUTO_SUMMARIZE: "0" },
+    env: { ...process.env, GIGAMANAGE_AUTO_SUMMARIZE: "0" },
   });
   child.unref();
   return child.pid;
@@ -452,7 +452,7 @@ function spawnWorker(): number | undefined {
  */
 export async function runAutoSummarize(provider: SummaryProvider): Promise<SummarizeBatchResult> {
   try {
-    // Work the queue its parent published, so `gmux ls -n 50` really does get all
+    // Work the queue its parent published, so `gm ls -n 50` really does get all
     // fifty — not just whatever the default window happens to be.
     const queue = await readQueue();
     const wanted = new Set(queue?.ids ?? []);
@@ -495,7 +495,7 @@ export async function runAutoSummarize(provider: SummaryProvider): Promise<Summa
  * Leave evidence when a background pass fails.
  *
  * The worker's stdio is `ignore`d, so without this a broken provider is utterly
- * silent: summaries just never appear and there is nothing to look at. `gmux doctor`
+ * silent: summaries just never appear and there is nothing to look at. `gm doctor`
  * surfaces the last line of this file.
  */
 async function logLine(message: string): Promise<void> {
@@ -513,7 +513,7 @@ async function logFailures(result: SummarizeBatchResult): Promise<void> {
   }
 }
 
-/** The most recent background failure, if any — surfaced by `gmux doctor`. */
+/** The most recent background failure, if any — surfaced by `gm doctor`. */
 export async function lastAutoSummarizeError(): Promise<string | null> {
   try {
     const lines = (await readFile(logPath(), "utf8")).trim().split("\n").filter(Boolean);

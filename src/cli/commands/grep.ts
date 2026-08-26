@@ -62,7 +62,7 @@ export function registerGrep(program: Command): void {
         }
 
         process.stdout.write(
-          `${dim(`${hits.length} session${hits.length === 1 ? "" : "s"}. Open one with: gmux show <id>`)}\n`,
+          `${dim(`${hits.length} session${hits.length === 1 ? "" : "s"}. Open one with: gm show <id>`)}\n`,
         );
       },
     );

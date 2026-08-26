@@ -12,7 +12,7 @@ afterEach(async () => { await server?.stop(); });
 
 describe("ModelServer", () => {
   it("streams a snapshot on change and writes the snapshot file", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "gmux-"));
+    const dir = mkdtempSync(join(tmpdir(), "gm-"));
     const sock = join(dir, "d.sock");
     const snap = join(dir, "snap.json");
     const model = new WorkspaceModel();
@@ -48,7 +48,7 @@ describe("ModelServer", () => {
     const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
     process.on("unhandledRejection", onUnhandled);
     try {
-      const dir = mkdtempSync(join(tmpdir(), "gmux-"));
+      const dir = mkdtempSync(join(tmpdir(), "gm-"));
       const sock = join(dir, "d.sock");
       const snap = join(dir, "snap.json");
       const model = new WorkspaceModel();

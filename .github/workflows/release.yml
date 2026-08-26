@@ -11,8 +11,8 @@ name: Release
 #
 # The trusted publisher is bound to THIS workflow's filename. Renaming this file
 # breaks publishing until the trust config is re-pointed:
-#   npm trust github gmux --file <new-name>.yml \
-#     --repo GigaFlowAI/gmux --allow-publish
+#   npm trust github gm --file <new-name>.yml \
+#     --repo GigaFlowAI/gigamanage --allow-publish
 on:
   push:
     tags: ["v*"]

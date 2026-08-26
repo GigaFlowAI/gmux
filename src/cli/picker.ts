@@ -3,7 +3,7 @@
  *
  * fzf is used when installed — it gives fuzzy matching and a live preview pane
  * for free. When it is absent we fall back to a numbered prompt rather than
- * failing: gmux must work on a machine with nothing but Node.
+ * failing: gm must work on a machine with nothing but Node.
  *
  * Rows WRAP rather than being chopped at the right edge, in both modes. In fzf
  * that needs multi-line items: records are NUL-delimited (`--read0`) so a single
@@ -120,7 +120,7 @@ export function askTier(input: {
   // `selfCommand` is null.
   if (!input.hasFzf) return "prompt";
 
-  // Every fzf tier runs `gmux` through a shell, so an unaddressable build has no
+  // Every fzf tier runs `gm` through a shell, so an unaddressable build has no
   // command to bind.
   if (!input.selfCommand) return "none";
 
@@ -259,8 +259,8 @@ export async function pickSession(
  * How to re-invoke *this* build, as a shell command string.
  *
  * fzf runs the preview and reload commands through a shell, and they must hit
- * this build — not whatever `gmux` happens to be on PATH. During development
- * there may be no `gmux` on PATH at all, and both would silently render nothing.
+ * this build — not whatever `gm` happens to be on PATH. During development
+ * there may be no `gm` on PATH at all, and both would silently render nothing.
  *
  * `execArgv` MUST be forwarded, for the same reason `spawnWorker` forwards it:
  * under `npm run dev` the entry point is `src/cli/main.ts` and execArgv carries
@@ -308,7 +308,7 @@ export function selfCommandHere(): string | null {
  * silence). tests/picker.test.ts pins the spelling against the real constant.
  */
 function previewCommand(transcript?: string): string {
-  const self = selfCommandHere() ?? "gmux";
+  const self = selfCommandHere() ?? "gm";
   if (!transcript) return `${self} show {1} --no-color`;
   return `${self} __preview-card {1} --chat ${shellQuote(transcript)} --pane-lines \${FZF_PREVIEW_LINES:-0}`;
 }
@@ -326,7 +326,7 @@ function reloadCommand(reloadArgs: readonly string[] | undefined): string | null
 }
 
 /**
- * The command behind ctrl-o: open `gmux ask` about the highlighted session.
+ * The command behind ctrl-o: open `gm ask` about the highlighted session.
  *
  * `askArgs` MUST carry the picker's filters and limit, for the same reason
  * `reloadArgs` does. Without them the child re-derives its own window from
@@ -559,7 +559,7 @@ export function chatBindings(spec: AskModeSpec): string[] {
  * no `env` at all — so a user with `FZF_DEFAULT_OPTS=--disabled` handed us a
  * picker whose `$FZF_INPUT_STATE` is `disabled` at the very first frame: the
  * bindings believe they are already in ask mode, enter never resumes, and ctrl-o
- * cannot get you back. gmux builds its full arg set anyway, and a user `--bind`
+ * cannot get you back. gm builds its full arg set anyway, and a user `--bind`
  * colliding with ours is the same class of problem.
  *
  * **The api key rides here and NOWHERE else.** `--listen` is an
@@ -684,7 +684,7 @@ export function fzfArgs(spec: FzfSpec): string[] {
       "sh -c",
       // The answer arrives with no keypress, and `refresh-preview` over the listen
       // port is the only thing that can deliver it. No argument: fzf picks the
-      // port and exports `$FZF_PORT` to its children, so nothing in gmux needs to
+      // port and exports `$FZF_PORT` to its children, so nothing in gm needs to
       // know it. It is also an ACE surface — see `fzfSpawnEnv` for the key.
       "--listen",
       ...chatBindings({ ...chat, browseHeader, askHeader: headerFor(ASK_KEYS) }),
@@ -733,7 +733,7 @@ async function pickWithFzf(
 
   // `finally` covers every way the picker ends on its own, INCLUDING ctrl-c
   // inside fzf: fzf exits, the promise resolves, we clean up. The signal handlers
-  // cover the other case — the shell killing `gmux` — and are registered only when
+  // cover the other case — the shell killing `gm` — and are registered only when
   // there is something to close, so a picker with no chat keeps today's exact
   // signal behaviour (no handler, no survival, no change).
   let closed = false;

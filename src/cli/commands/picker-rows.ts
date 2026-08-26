@@ -7,7 +7,7 @@ import { PICKER_ROWS_COMMAND, type PickerRowsOptions } from "./pick.js";
 import { autoSummarizeRequested, toFilters } from "./ls.js";
 
 /**
- * The picker's ctrl-r target, re-entered as `gmux __picker-rows`.
+ * The picker's ctrl-r target, re-entered as `gm __picker-rows`.
  *
  * Hidden: like `__auto-summarize`, it is not a thing a person runs. fzf's
  * `reload` binding replaces its item list with a command's stdout, so refresh

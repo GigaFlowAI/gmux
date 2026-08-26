@@ -2,7 +2,7 @@
  * Rendering.
  *
  * Colour is applied only when stdout is a TTY and NO_COLOR is unset, so piping
- * `gmux ls` into another program — or into an agent — yields clean text.
+ * `gm ls` into another program — or into an agent — yields clean text.
  */
 
 import { cell, relativeAge, truncate, wrapText } from "../core/text.js";
@@ -29,7 +29,7 @@ export const green = wrap("32");
  * false and `useColor()` above is too — yet fzf renders that pipe with `--ansi`.
  * These variants drop only the TTY test, so the pane can carry colour while
  * `NO_COLOR` and `TERM=dumb` still turn it off. Used solely by `preview.ts`; the
- * card and `gmux ls`/`gmux show` keep the gated `dim`/`cyan`/`bold` and stay clean
+ * card and `gm ls`/`gm show` keep the gated `dim`/`cyan`/`bold` and stay clean
  * when piped into another program.
  */
 const wrapForced = (code: string) => (text: string) =>
@@ -57,7 +57,7 @@ const IN_PROGRESS = "◐";
  * Every marker a row can carry, and what it means — in the order the key lists
  * them.
  *
- * One table because there are two ways to explain these markers (`gmux ls`'s
+ * One table because there are two ways to explain these markers (`gm ls`'s
  * counted legend and the picker's static key) and one meaning. Spelled out at
  * each call site instead, "◐ means summarizing now" would live in three places
  * and drift in two of them.
@@ -166,12 +166,12 @@ export function formatRow(
 }
 
 /**
- * One row of `gmux ls`, wrapped to the terminal so the whole description is
+ * One row of `gm ls`, wrapped to the terminal so the whole description is
  * readable rather than chopped off at the right edge. Continuation lines are
  * indented to sit under the description column.
  *
  * Pass `width: Infinity` when the output is not a terminal: piped output should
- * be one line per session, so `gmux ls | grep` behaves.
+ * be one line per session, so `gm ls | grep` behaves.
  */
 export function formatRowLines(
   view: SessionView,
@@ -225,7 +225,7 @@ export function formatLegend(
 /**
  * The key for a LIVE list: every marker, always, and never a count.
  *
- * The picker renders the same markers `gmux ls` does, so it needs the same
+ * The picker renders the same markers `gm ls` does, so it needs the same
  * explanation — but not `formatLegend`. fzf sets `--header` once, at spawn:
  * `ctrl-r` reloads the item list and leaves the header untouched. Counts baked
  * in there freeze at open and are wrong after the first refresh, and a key
@@ -245,7 +245,7 @@ export function terminalWidth(): number {
   return process.stdout.columns && process.stdout.columns > 0 ? process.stdout.columns : 100;
 }
 
-/** The detail card shown by `gmux show` and in the picker's preview pane. */
+/** The detail card shown by `gm show` and in the picker's preview pane. */
 export function formatCard(view: SessionView, now: Date = new Date()): string {
   const { record, summary } = view;
   const lines: string[] = [];
@@ -269,7 +269,7 @@ export function formatCard(view: SessionView, now: Date = new Date()): string {
   } else {
     lines.push(
       dim("No summary yet."),
-      dim(`Run: gmux summarize ${record.sessionId.slice(0, 8)}`),
+      dim(`Run: gm summarize ${record.sessionId.slice(0, 8)}`),
       "",
     );
     if (record.title) lines.push(bold("TITLE (recorded at session start)"), indent(record.title), "");
@@ -315,7 +315,7 @@ export function formatCard(view: SessionView, now: Date = new Date()): string {
  * Two spaces under a heading — the card's only body indent.
  *
  * Exported for the preview's chat half, whose speaker bodies sit under `you` and
- * `gmux` exactly as the card's text sits under `WHERE IT LANDED`. Both halves share
+ * `gm` exactly as the card's text sits under `WHERE IT LANDED`. Both halves share
  * one pane, so a second indent idiom would show up as two columns that almost
  * line up.
  */

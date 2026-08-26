@@ -43,7 +43,7 @@ const run = promisify(execFile);
 
 let dir: string;
 beforeAll(async () => {
-  dir = await mkdtemp(join(tmpdir(), "gmux-chat-"));
+  dir = await mkdtemp(join(tmpdir(), "gm-chat-"));
 });
 afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
@@ -132,8 +132,8 @@ const BOLD = "\x1b[1m";
 
 const askSpec = (overrides: Partial<AskModeSpec> = {}): AskModeSpec => ({
   transcript: "/cache/ask/1-abcd.jsonl",
-  sendCmd: "gmux __ask-send --transcript /cache/ask/1-abcd.jsonl",
-  cancelCmd: "gmux __ask-cancel --transcript /cache/ask/1-abcd.jsonl",
+  sendCmd: "gm __ask-send --transcript /cache/ask/1-abcd.jsonl",
+  cancelCmd: "gm __ask-cancel --transcript /cache/ask/1-abcd.jsonl",
   browseHeader: "enter: resume   ctrl-r: refresh   ctrl-o: ask   ctrl-c: cancel\nkey",
   askHeader: "enter: send   esc: back\nkey",
   ...overrides,
@@ -268,16 +268,16 @@ describe("formatChat", () => {
     const chat = withColor(false, () => formatChat(transcriptOf(thread), 20, 60, NOW));
     expect(chat).toContain("you");
     expect(chat).toContain("  why did this fail?");
-    expect(chat).toContain("gmux");
+    expect(chat).toContain("gm");
     expect(chat).toContain("  The run died in apply_patch.");
   });
 
-  it("lights up the speaker labels: `you` bold, `gmux` cyan", () => {
+  it("lights up the speaker labels: `you` bold, `gm` cyan", () => {
     // The colour makes the chat half read as its own thing under the card. It is
     // an accent on top of the layout, which already distinguishes them alone.
     const chat = withColor(true, () => formatChat(transcriptOf(thread), 20, 60, NOW));
     expect(chat).toContain(`${BOLD}you`);
-    expect(chat).toContain(`${CYAN}gmux`);
+    expect(chat).toContain(`${CYAN}gm`);
     // The bodies are never coloured — only the speaker labels are.
     expect(chat).toContain("  The run died in apply_patch.");
   });
@@ -605,12 +605,12 @@ describe("the mode toggle is reversible", () => {
 /* ------------------------------------------------------------- the arg set */
 
 describe("the split tier's fzf arguments", () => {
-  const chat = { transcript: "/cache/ask/1-abcd.jsonl", sendCmd: "gmux __ask-send", cancelCmd: "gmux __ask-cancel" };
+  const chat = { transcript: "/cache/ask/1-abcd.jsonl", sendCmd: "gm __ask-send", cancelCmd: "gm __ask-cancel" };
   const spec = (overrides: Partial<FzfSpec> = {}): FzfSpec => ({
     multiline: true,
-    preview: "gmux __preview-card {1} --chat /cache/ask/1-abcd.jsonl",
-    reloadCmd: "gmux __picker-rows --width 44",
-    askCmd: "gmux ask --focus {1}",
+    preview: "gm __preview-card {1} --chat /cache/ask/1-abcd.jsonl",
+    reloadCmd: "gm __picker-rows --width 44",
+    askCmd: "gm ask --focus {1}",
     tier: "split",
     chat,
     ...overrides,
@@ -623,7 +623,7 @@ describe("the split tier's fzf arguments", () => {
   });
 
   it("opens a listen port with no argument, so fzf picks it", () => {
-    // Nothing in gmux needs to know the port: fzf exports `$FZF_PORT` to children.
+    // Nothing in gm needs to know the port: fzf exports `$FZF_PORT` to children.
     const args = fzfArgs(spec());
     expect(args).toContain("--listen");
     expect(args.join(" ")).not.toMatch(/--listen[= ]\d/);
@@ -686,8 +686,8 @@ describe("the split tier's fzf arguments", () => {
     // Verified: a child inheriting fzf's stdout blocks fzf until EOF even when
     // backgrounded with `&`.
     const args = fzfArgs(spec()).join("\n");
-    expect(args).toContain("gmux __ask-send --port \"$FZF_PORT\" --focus {1} --question \"$FZF_QUERY\" >/dev/null 2>&1");
-    expect(args).toContain('gmux __ask-cancel --port "$FZF_PORT" >/dev/null 2>&1');
+    expect(args).toContain("gm __ask-send --port \"$FZF_PORT\" --focus {1} --question \"$FZF_QUERY\" >/dev/null 2>&1");
+    expect(args).toContain('gm __ask-cancel --port "$FZF_PORT" >/dev/null 2>&1');
   });
 });
 
@@ -725,11 +725,11 @@ describe("the fzf spawn's environment", () => {
     const key = "DI+aQPstHKos3Yf4ReWk8EZ1DFz+ORkpiFnCeoHdeeE=";
     const args = fzfArgs({
       multiline: true,
-      preview: "gmux __preview-card {1}",
-      reloadCmd: "gmux __picker-rows",
+      preview: "gm __preview-card {1}",
+      reloadCmd: "gm __picker-rows",
       askCmd: null,
       tier: "split",
-      chat: { transcript: "/cache/ask/1-abcd.jsonl", sendCmd: "gmux __ask-send", cancelCmd: "gmux __ask-cancel" },
+      chat: { transcript: "/cache/ask/1-abcd.jsonl", sendCmd: "gm __ask-send", cancelCmd: "gm __ask-cancel" },
     });
     expect(args.join("\n")).not.toContain(key);
     expect(args.join("\n")).not.toContain("FZF_API_KEY");

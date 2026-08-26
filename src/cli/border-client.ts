@@ -1,11 +1,11 @@
 /**
  * The daemon-driven border painter: given a `WorkspaceSnapshot`, writes every
- * pane's `@gmux_label` from the model, zero sensing. `gmux daemon run` calls this
+ * pane's `@gm_label` from the model, zero sensing. `gm daemon run` calls this
  * on every model "change" event; `snapshotLabel` (tmux-label.ts) does the
  * actual glyph/text formatting.
  */
 
-import type { WorkspaceSnapshot } from "../core/gmux-types.js";
+import type { WorkspaceSnapshot } from "../core/workspace-types.js";
 import { snapshotLabel } from "./tmux-label.js";
 
 export async function paintFromSnapshot(

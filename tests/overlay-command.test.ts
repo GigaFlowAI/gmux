@@ -1,10 +1,8 @@
-import { Command } from "commander";
 import { describe, expect, it } from "vitest";
 
 import type { SessionView, TmuxPane } from "../src/core/types.js";
 import type { ResolvedPane } from "../src/services/tmux-resolve.js";
-import { GmuxError } from "../src/core/errors.js";
-import { buildCells, isCloseKey, registerOverlay } from "../src/cli/commands/overlay.js";
+import { buildCells, isCloseKey } from "../src/cli/commands/overlay.js";
 
 function pane(id: string, cwd: string): TmuxPane {
   return {
@@ -33,21 +31,6 @@ function viewFor(sessionId: string): SessionView {
     summary: null,
   };
 }
-
-describe("registerOverlay", () => {
-  it("is hidden and exits 2 with fix: use gmux attach", async () => {
-    const program = new Command();
-    program.exitOverride();
-    registerOverlay(program);
-    expect(program.helpInformation()).not.toMatch(/\boverlay\b/);
-    await expect(program.parseAsync(["overlay"], { from: "user" })).rejects.toSatisfy((err: unknown) => {
-      expect(err).toBeInstanceOf(GmuxError);
-      expect((err as GmuxError).exitCode).toBe(2);
-      expect((err as GmuxError).fix).toBe("use gmux attach");
-      return true;
-    });
-  });
-});
 
 describe("isCloseKey", () => {
   it("closes on ctrl-g, so the same key that opens the overlay dismisses it", () => {

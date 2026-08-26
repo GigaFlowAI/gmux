@@ -1,7 +1,7 @@
 import type { SessionRecord, SessionRef, HarnessId } from "../core/types.js";
 
 /**
- * The one seam that makes gmux harness-agnostic.
+ * The one seam that makes gm harness-agnostic.
  *
  * To support a new agent harness, implement this interface in a single file
  * under `src/adapters/` and register it in `registry.ts`. Nothing else in the
@@ -22,7 +22,7 @@ export interface HarnessAdapter {
    */
   readonly processNames: readonly string[];
 
-  /** The binary `gmux run` launches for this harness, e.g. "claude" or "codex". */
+  /** The binary `gm run` launches for this harness, e.g. "claude" or "codex". */
   readonly launchCommand: string;
 
   /**

@@ -11,27 +11,26 @@ import type { OrganizePlan } from "../src/core/organize-types.js";
 import { CONFIRM_HINT, confirmFrameLines, confirmKey, makeGeneration } from "../src/cli/organize-confirm.js";
 
 const plan: OrganizePlan = {
-  schemaVersion: 2,
-  summary: "2 project tab(s), 1 pane(s) moved",
+  summary: "2 project window(s), 1 pane(s) moved",
   steps: [
-    { op: "rename-tab", tab: { kind: "tab", tabId: "t_1" }, name: "alpha", description: 'Rename tab to "alpha"' },
-    { op: "move-pane", paneId: "p_2", to: { kind: "tab", tabId: "t_1" }, description: 'Move p_2 → "alpha"' },
+    { op: "rename-window", window: { kind: "window", windowId: "@1" }, name: "alpha", description: 'Rename window to "alpha"' },
+    { op: "move-pane", paneId: "%2", to: { kind: "window", windowId: "@1" }, description: 'Move %2 → "alpha"' },
   ],
 };
 
 describe("confirmFrameLines", () => {
   it("renders the summary, numbered steps, a blank line, then the hint", () => {
     expect(confirmFrameLines(plan)).toEqual([
-      "2 project tab(s), 1 pane(s) moved",
-      '1. Rename tab to "alpha"',
-      '2. Move p_2 → "alpha"',
+      "2 project window(s), 1 pane(s) moved",
+      '1. Rename window to "alpha"',
+      '2. Move %2 → "alpha"',
       "",
       CONFIRM_HINT,
     ]);
   });
 
   it("renders an empty plan as just the summary, blank line, and hint", () => {
-    expect(confirmFrameLines({ schemaVersion: 2, summary: "nothing to do", steps: [] })).toEqual([
+    expect(confirmFrameLines({ summary: "nothing to do", steps: [] })).toEqual([
       "nothing to do",
       "",
       CONFIRM_HINT,

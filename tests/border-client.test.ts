@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { snapshotLabel, stateGlyph } from "../src/cli/tmux-label.js";
-import type { PaneEntry } from "../src/core/gmux-types.js";
+import type { PaneEntry } from "../src/core/workspace-types.js";
 
 const entry = (over: Partial<PaneEntry>): PaneEntry => ({
   identity: { paneId: "%1", windowId: "@1", active: true, harness: null, sessionId: null, cwd: "/x/webshop", command: "node", pid: 1 },

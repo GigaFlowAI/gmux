@@ -34,12 +34,12 @@ let cache: string;
 beforeEach(async () => {
   home = await tempHome();
   cache = await tempHome();
-  process.env.GMUX_HOME = home;
+  process.env.GIGAMANAGE_HOME = home;
   process.env.XDG_CACHE_HOME = cache;
 });
 
 afterEach(async () => {
-  delete process.env.GMUX_HOME;
+  delete process.env.GIGAMANAGE_HOME;
   delete process.env.XDG_CACHE_HOME;
   await rm(home, { recursive: true, force: true });
   await rm(cache, { recursive: true, force: true });
@@ -115,9 +115,9 @@ describe("resolveSession", () => {
     expect(() => resolveSession(records, "aaaa")).toThrow(AmbiguousSessionError);
   });
 
-  // `gmux show`/`gmux resume` look up with includeAutomated+includeSidechains, so an
-  // id copied out of `gmux ls --include-automated` actually opens.
-  it("can resolve a session that `gmux ls` hides by default", () => {
+  // `gm show`/`gm resume` look up with includeAutomated+includeSidechains, so an
+  // id copied out of `gm ls --include-automated` actually opens.
+  it("can resolve a session that `gm ls` hides by default", () => {
     const hidden = [
       record({ sessionId: "cccc4444-4444-4444-4444-444444444444", isAutomated: true }),
       record({ sessionId: "dddd5555-5555-5555-5555-555555555555", isSidechain: true }),
@@ -134,7 +134,7 @@ describe("resolveSession", () => {
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(SessionNotFoundError);
-      expect((error as SessionNotFoundError).fix).toContain("gmux ls");
+      expect((error as SessionNotFoundError).fix).toContain("gm ls");
     }
   });
 });
@@ -215,8 +215,8 @@ describe("the index", () => {
     await refreshIndex();
 
     const { writeFile, mkdir } = await import("node:fs/promises");
-    await mkdir(join(cache, "gmux"), { recursive: true });
-    await writeFile(join(cache, "gmux", "index.json"), "{ not json", "utf8");
+    await mkdir(join(cache, "gigamanage"), { recursive: true });
+    await writeFile(join(cache, "gigamanage", "index.json"), "{ not json", "utf8");
 
     const result = await refreshIndex();
     expect(result.records).toHaveLength(1);
@@ -490,7 +490,7 @@ describe("wrapText", () => {
   });
 });
 
-describe("gmux ls row wrapping", () => {
+describe("gm ls row wrapping", () => {
   const view = {
     record: record({
       sessionId: "abcd1234-0000-0000-0000-000000000000",
@@ -627,7 +627,7 @@ describe("the detail card", () => {
     const card = plain({ record: record(), summary: null });
 
     expect(card).toContain("No summary yet.");
-    expect(card).toContain("gmux summarize aaaa1111");
+    expect(card).toContain("gm summarize aaaa1111");
     expect(card).toContain("TITLE (recorded at session start)");
   });
 });
@@ -809,12 +809,12 @@ describe("the picker's reload command", () => {
 });
 
 describe("the picker's fzf arguments", () => {
-  const preview = "node gmux show {1} --no-color";
+  const preview = "node gm show {1} --no-color";
   /** The browse half of the spec. Ask is `tests/ask-fallbacks.test.ts`'s subject. */
   const spec = (overrides: Partial<FzfSpec> = {}): FzfSpec => ({
     multiline: true,
     preview,
-    reloadCmd: "node gmux __picker-rows --width 44",
+    reloadCmd: "node gm __picker-rows --width 44",
     askCmd: null,
     tier: "none",
     ...overrides,
@@ -823,7 +823,7 @@ describe("the picker's fzf arguments", () => {
   it("binds ctrl-r to reload, and says so in the header", () => {
     const args = fzfArgs(spec());
 
-    expect(args).toContain("--bind=ctrl-r:reload(node gmux __picker-rows --width 44)");
+    expect(args).toContain("--bind=ctrl-r:reload(node gm __picker-rows --width 44)");
     expect(args[args.indexOf("--header") + 1]).toContain("ctrl-r: refresh");
   });
 
@@ -844,17 +844,17 @@ describe("the picker's fzf arguments", () => {
   });
 
   it("keeps --read0 and --print0 together, so a refreshed multi-line row is still one selection", () => {
-    const args = fzfArgs(spec({ reloadCmd: "node gmux __picker-rows" }));
+    const args = fzfArgs(spec({ reloadCmd: "node gm __picker-rows" }));
 
     expect(args).toContain("--read0");
     expect(args).toContain("--print0");
   });
 
   it("drops the multi-line flags on an fzf too old for them", () => {
-    const args = fzfArgs(spec({ multiline: false, reloadCmd: "node gmux __picker-rows" }));
+    const args = fzfArgs(spec({ multiline: false, reloadCmd: "node gm __picker-rows" }));
 
     expect(args).not.toContain("--read0");
-    expect(args).toContain("--bind=ctrl-r:reload(node gmux __picker-rows)"); // refresh still works
+    expect(args).toContain("--bind=ctrl-r:reload(node gm __picker-rows)"); // refresh still works
   });
 });
 
@@ -930,14 +930,14 @@ describe("the picker's opt-out", () => {
     const run = (argv: string[]): boolean => {
       let seen = true;
       const program = new Command();
-      program.name("gmux").exitOverride().option("--no-auto-summarize", "x");
+      program.name("gm").exitOverride().option("--no-auto-summarize", "x");
       program
         .command("probe")
         .exitOverride()
         .action((_o, command: Command) => {
           seen = autoSummarizeRequested(command);
         });
-      program.parse(["node", "gmux", ...argv]);
+      program.parse(["node", "gm", ...argv]);
       return seen;
     };
 
