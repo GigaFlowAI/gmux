@@ -105,14 +105,28 @@ pub struct Event {
     pub body: serde_json::Value,
 }
 
+/// Same window as `src/core/pane-state.ts` `WORKING_WINDOW_MS`.
+pub const WORKING_WINDOW_MS: u64 = 10_000;
+
+#[derive(Clone, Debug, Default)]
+pub struct IntelPatch {
+    pub state: Option<String>,
+    pub semantics: Option<serde_json::Value>,
+    pub resources: Option<serde_json::Value>,
+}
+
 pub struct Mux {
     pub paths: Paths,
     pub intel_token: String,
     pub intel_pid: Option<u32>,
+    pub intel_connected: bool,
     pub cached_harness_argv: Option<Vec<String>>,
     pub workspaces: HashMap<String, Workspace>,
     pub panes: HashMap<String, Pane>,
     pub clients: HashMap<String, Client>,
+    pub patches: HashMap<String, IntelPatch>,
+    pub guardian_log: Vec<serde_json::Value>,
+    pub host_pressure: Option<serde_json::Value>,
     event_tx: broadcast::Sender<Event>,
 }
 
@@ -123,10 +137,14 @@ impl Mux {
             paths,
             intel_token,
             intel_pid: None,
+            intel_connected: false,
             cached_harness_argv: None,
             workspaces: HashMap::new(),
             panes: HashMap::new(),
             clients: HashMap::new(),
+            patches: HashMap::new(),
+            guardian_log: Vec::new(),
+            host_pressure: None,
             event_tx,
         }
     }
@@ -348,6 +366,7 @@ impl Mux {
         let tab_id = pane.tab_id.clone();
         let workspace_id = pane.workspace_id.clone();
         pane.kill();
+        self.patches.remove(pane_id);
 
         if let Some(ws) = self.workspaces.get_mut(&workspace_id) {
             if let Some(tab) = ws.tabs.get_mut(&tab_id) {
@@ -508,6 +527,7 @@ impl Mux {
     }
 
     pub fn snapshot(&self) -> serde_json::Value {
+        let now = crate::grid::unix_ms();
         let workspaces: Vec<_> = self
             .workspaces
             .values()
@@ -530,7 +550,11 @@ impl Mux {
                 })
             })
             .collect();
-        let panes: Vec<_> = self.panes.values().map(pane_json).collect();
+        let panes: Vec<_> = self
+            .panes
+            .values()
+            .map(|p| self.pane_snapshot(p, now))
+            .collect();
         let clients: Vec<_> = self
             .clients
             .values()
@@ -547,11 +571,109 @@ impl Mux {
             "workspaces": workspaces,
             "panes": panes,
             "clients": clients,
+            "intel": {
+                "up": self.intel_connected,
+                "pid": self.intel_pid,
+            },
+            "guardianLog": self.guardian_log,
+            "hostPressure": self.host_pressure,
         })
     }
 
     pub fn list_panes(&self) -> Vec<serde_json::Value> {
-        self.panes.values().map(pane_json).collect()
+        let now = crate::grid::unix_ms();
+        self.panes
+            .values()
+            .map(|p| self.pane_snapshot(p, now))
+            .collect()
+    }
+
+    /// Intel patches `state` / `semantics` / `resources` / `guardianLog` by paneId.
+    /// Layout and identity stay mux-owned. Unknown paneIds are ignored (pane vanished).
+    pub fn report_semantics(
+        &mut self,
+        pane_id: &str,
+        state: Option<String>,
+        semantics: Option<serde_json::Value>,
+        resources: Option<serde_json::Value>,
+        guardian_log: Option<&serde_json::Value>,
+        host_pressure: Option<serde_json::Value>,
+    ) {
+        if self.panes.contains_key(pane_id) {
+            let entry = self.patches.entry(pane_id.to_string()).or_default();
+            if state.is_some() {
+                entry.state = state;
+            }
+            if semantics.is_some() {
+                entry.semantics = semantics;
+            }
+            if resources.is_some() {
+                entry.resources = resources;
+            }
+        }
+        if let Some(log) = guardian_log {
+            if let Some(arr) = log.as_array() {
+                // Full snapshot from intel replaces, so a tick does not append dupes.
+                self.guardian_log = arr.clone();
+                if self.guardian_log.len() > 50 {
+                    let extra = self.guardian_log.len() - 50;
+                    self.guardian_log.drain(0..extra);
+                }
+            } else if log.is_object() {
+                self.guardian_log.push(log.clone());
+                if self.guardian_log.len() > 50 {
+                    self.guardian_log.remove(0);
+                }
+            }
+        }
+        if let Some(hp) = host_pressure {
+            self.host_pressure = Some(hp);
+        }
+    }
+
+    pub fn close_tab(&mut self, tab_id: &str) -> Result<(), MuxError> {
+        let pane_ids: Vec<String> = self
+            .workspaces
+            .values()
+            .find_map(|ws| ws.tabs.get(tab_id).map(|t| t.pane_ids.clone()))
+            .ok_or_else(|| {
+                MuxError::rpc(
+                    "not_found",
+                    &format!("tab {tab_id} not found"),
+                    "Run gmux snapshot --json",
+                )
+            })?;
+        for id in pane_ids {
+            let _ = self.close_pane(&id);
+        }
+        for ws in self.workspaces.values_mut() {
+            ws.tabs.remove(tab_id);
+        }
+        Ok(())
+    }
+
+    fn pane_snapshot(&self, pane: &Pane, now: u64) -> serde_json::Value {
+        let patch = self.patches.get(&pane.id);
+        let mut value = pane_json(pane);
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert(
+                "state".into(),
+                serde_json::Value::String(glyph_state(pane, patch, self.intel_connected, now)),
+            );
+            obj.insert(
+                "semantics".into(),
+                patch
+                    .and_then(|p| p.semantics.clone())
+                    .unwrap_or(serde_json::Value::Null),
+            );
+            obj.insert(
+                "resources".into(),
+                patch
+                    .and_then(|p| p.resources.clone())
+                    .unwrap_or(serde_json::Value::Null),
+            );
+        }
+        value
     }
 
     fn ensure_workspace(&mut self, cwd: &Path) -> String {
@@ -616,6 +738,33 @@ fn pane_json(pane: &Pane) -> serde_json::Value {
         "peelDepth": pane.peel_depth,
         "templateId": pane.template_id,
     })
+}
+
+/// Mux-only glyphs when intel is down: `{working, idle}` from PTY byte activity.
+/// `waiting` / `error` / `done` freeze last known.
+fn glyph_state(pane: &Pane, patch: Option<&IntelPatch>, intel_up: bool, now: u64) -> String {
+    let last = patch.and_then(|p| p.state.as_deref());
+    if !intel_up {
+        if matches!(last, Some("waiting" | "error" | "done")) {
+            return last.unwrap().to_string();
+        }
+        return pty_glyph(pane, now);
+    }
+    last.map(str::to_string).unwrap_or_else(|| pty_glyph(pane, now))
+}
+
+fn pty_glyph(pane: &Pane, now: u64) -> String {
+    let last = pane
+        .grid
+        .lock()
+        .ok()
+        .map(|g| g.last_byte_ms)
+        .unwrap_or(0);
+    if now.saturating_sub(last) < WORKING_WINDOW_MS {
+        "working".into()
+    } else {
+        "idle".into()
+    }
 }
 
 /// Git toplevel if `git rev-parse --show-toplevel` succeeds, else `cwd`.

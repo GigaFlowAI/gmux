@@ -21,6 +21,8 @@ export interface MuxGateway {
   renameTab(tabId: string, name: string): Promise<void>;
   movePane(srcPane: string, dstTab: string): Promise<void>;
   breakPane(pane: string, name?: string): Promise<string>;
+  /** Fast path: spawn from the client's focused pane shadow. Must not await extract. */
+  peel(clientId: string): Promise<{ paneId: string; tabId: string }>;
 }
 
 /** In-memory MuxGateway for Vitest. Pane ids are `p_` + Crockford of `{0…n}`. */
@@ -184,5 +186,24 @@ export class FakeMuxGateway implements MuxGateway {
     await this.movePane(pane, tabId);
     this.broken.push({ pane, tabId, name });
     return tabId;
+  }
+
+  /**
+   * Spawn-from-shadow, `focus: false`. Peel is mux-local — it must not await
+   * `prompt.extract` (a hung sidecar cannot block ctrl+t).
+   */
+  async peel(clientId: string): Promise<{ paneId: string; tabId: string }> {
+    const parentId = this.clientFocus.get(clientId);
+    const parent = parentId ? this.panes.find((p) => p.paneId === parentId) : undefined;
+    if (!parent) {
+      throw new Error(`no focused pane for client ${clientId}`);
+    }
+    return this.spawn({
+      cwd: parent.cwd,
+      argv: [...parent.argv],
+      tab: { mode: "new", name: "new agent" },
+      focus: false,
+      peelDepth: parent.peelDepth + 1,
+    });
   }
 }

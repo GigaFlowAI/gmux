@@ -3,19 +3,122 @@
 //! Request: `{"id","method","params"}`.
 //! Reply: `{"id","result"}` or `{"id","error":{"code","message","fix"}}`.
 //! Events: `{"event":"pane.created","body":{...}}`.
-//! Intel is a bidirectional stub this task: accept `hello`, ignore other inbound
-//! requests (full RPC lands Task 5).
+//!
+//! Method ownership
+//! ----------------
+//! mux (client → mux): ping, pane.spawn, pane.close, tab.close, peel (fast),
+//!   pane.send_keys, pane.list, session.snapshot, client.attach
+//! intel (mux originates, intel replies on `id`):
+//!   prompt.extract (20 ms), context.pack (500 ms),
+//!   classify.intent (30_000 ms = CLASSIFY_TIMEOUT_MS),
+//!   organize.plan (120_000 ms = ORGANIZE_TIMEOUT_MS)
+//! intel → mux: pane.report_semantics
+//!
+//! Peel is mux-local and must not await extract. A hung sidecar cannot block
+//! ctrl+t. `session.snapshot` is mux-assembled (layout + last intel patches).
 
+use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::net::unix::OwnedWriteHalf;
+
+/// Deadlines (ms) — keep in sync with `src/services/mux-client.ts`.
+const EXTRACT_TIMEOUT: Duration = Duration::from_millis(20);
+const PACK_TIMEOUT: Duration = Duration::from_millis(500);
+const CLASSIFY_TIMEOUT: Duration = Duration::from_millis(30_000);
+const ORGANIZE_TIMEOUT: Duration = Duration::from_millis(120_000);
+
+struct IntelHub {
+    writer: tokio::sync::Mutex<Option<Arc<tokio::sync::Mutex<OwnedWriteHalf>>>>,
+    pending: Mutex<HashMap<String, tokio::sync::oneshot::Sender<Value>>>,
+    next_id: AtomicU64,
+}
+
+impl IntelHub {
+    fn new() -> Self {
+        Self {
+            writer: tokio::sync::Mutex::new(None),
+            pending: Mutex::new(HashMap::new()),
+            next_id: AtomicU64::new(1),
+        }
+    }
+
+    async fn attach(&self, writer: Arc<tokio::sync::Mutex<OwnedWriteHalf>>) {
+        *self.writer.lock().await = Some(writer);
+    }
+
+    async fn detach(&self) {
+        *self.writer.lock().await = None;
+        self.pending.lock().expect("pending").clear();
+    }
+
+    fn complete(&self, id: &str, value: Value) {
+        if let Some(tx) = self.pending.lock().expect("pending").remove(id) {
+            let _ = tx.send(value);
+        }
+    }
+
+    /// Mux-originated RPC. Unused by peel (fast path). Timeouts: extract 20ms,
+    /// pack 500ms, classify 30s, organize 120s.
+    #[allow(dead_code)]
+    async fn call(&self, method: &str, params: Value, timeout: Duration) -> Result<Value, MuxError> {
+        let writer = self.writer.lock().await.clone();
+        let Some(writer) = writer else {
+            return Err(MuxError::rpc(
+                "intel_down",
+                "intel sidecar is down",
+                "Start `gmux daemon --sidecar`. Peel still works without it.",
+            ));
+        };
+        let id = format!("ex_{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.pending.lock().expect("pending").insert(id.clone(), tx);
+        write_json(&writer, json!({"id": id, "method": method, "params": params}))
+            .await
+            .map_err(|e| {
+                MuxError::rpc(
+                    "io",
+                    &format!("intel write failed: {e}"),
+                    "Restart the sidecar (`gmux daemon --sidecar`)",
+                )
+            })?;
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(v)) => Ok(v),
+            Ok(Err(_)) => Err(MuxError::rpc(
+                "intel_down",
+                "intel sidecar dropped the reply",
+                "Restart `gmux daemon --sidecar`",
+            )),
+            Err(_) => {
+                self.pending.lock().expect("pending").remove(&id);
+                Err(MuxError::rpc(
+                    "timeout",
+                    &format!("{method} timed out"),
+                    "The sidecar hung; peel still works. Restart `gmux daemon --sidecar`.",
+                ))
+            }
+        }
+    }
+}
+
+fn _deadline_table() {
+    // Referenced so the table constants stay compiled in.
+    let _ = (
+        EXTRACT_TIMEOUT,
+        PACK_TIMEOUT,
+        CLASSIFY_TIMEOUT,
+        ORGANIZE_TIMEOUT,
+    );
+}
 
 use crate::lock::Lock;
 use crate::paths::Paths;
@@ -35,6 +138,8 @@ pub async fn run(paths: Paths, lock: Lock) -> std::io::Result<()> {
 
     let mux = Arc::new(Mutex::new(Mux::new(paths.clone(), token)));
     let lock = Arc::new(Mutex::new(lock));
+    let hub = Arc::new(IntelHub::new());
+    _deadline_table();
 
     loop {
         tokio::select! {
@@ -42,8 +147,9 @@ pub async fn run(paths: Paths, lock: Lock) -> std::io::Result<()> {
                 let (stream, _) = accepted?;
                 let mux = mux.clone();
                 let lock = lock.clone();
+                let hub = hub.clone();
                 tokio::spawn(async move {
-                    if let Err(err) = handle_client(mux, lock, stream).await {
+                    if let Err(err) = handle_client(mux, lock, hub, stream).await {
                         eprintln!("gmuxd client: {err}");
                     }
                 });
@@ -107,6 +213,7 @@ struct Conn {
 async fn handle_client(
     mux: Arc<Mutex<Mux>>,
     lock: Arc<Mutex<Lock>>,
+    hub: Arc<IntelHub>,
     stream: tokio::net::UnixStream,
 ) -> std::io::Result<()> {
     let peer_pid = match peer::peer_pid(stream.as_raw_fd()) {
@@ -168,6 +275,13 @@ async fn handle_client(
         if parsed.get("method").is_none()
             && (parsed.get("result").is_some() || parsed.get("error").is_some())
         {
+            if let Some(id) = parsed.get("id") {
+                let key = match id {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                hub.complete(&key, parsed);
+            }
             continue;
         }
 
@@ -197,8 +311,19 @@ async fn handle_client(
             continue;
         }
 
-        let reply = dispatch(&mux, &lock, &mut conn, &req, &writer).await;
+        let reply = dispatch(&mux, &lock, &hub, &mut conn, &req, &writer).await;
         write_json(&writer, reply).await?;
+    }
+    if matches!(conn.class, Ok(CallerClass::Intel)) {
+        {
+            let mut guard = mux.lock().expect("mux");
+            guard.intel_connected = false;
+            guard.intel_pid = None;
+        }
+        if let Ok(mut held) = lock.lock() {
+            let _ = held.set_intel_pid(None);
+        }
+        hub.detach().await;
     }
     if let Some(id) = conn.client_id.take() {
         mux.lock().expect("mux").detach_client(&id);
@@ -209,12 +334,13 @@ async fn handle_client(
 async fn dispatch(
     mux: &Arc<Mutex<Mux>>,
     lock: &Arc<Mutex<Lock>>,
+    hub: &Arc<IntelHub>,
     conn: &mut Conn,
     req: &Request,
     writer: &Arc<tokio::sync::Mutex<OwnedWriteHalf>>,
 ) -> Value {
     match req.method.as_str() {
-        "hello" => handle_hello(mux, lock, conn, req),
+        "hello" => handle_hello(mux, lock, hub, conn, req, writer).await,
         "ping" => ok(&req.id, json!({"ok": true})),
         "client.attach" => handle_attach(mux, conn, req).await,
         "session.snapshot" => gated(conn, req, "session.snapshot", |conn| {
@@ -353,11 +479,65 @@ async fn dispatch(
             });
             ok(&req.id, json!({"ok": true}))
         }),
+        "tab.close" => gated(conn, req, "tab.close", |_| {
+            let tab_id = req
+                .params
+                .get("tabId")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            match mux.lock().expect("mux").close_tab(tab_id) {
+                Ok(()) => ok(&req.id, json!({"ok": true})),
+                Err(err) => err_of(&req.id, &err),
+            }
+        }),
+        "pane.report_semantics" => gated(conn, req, "pane.report_semantics", |_| {
+            let pane_id = req
+                .params
+                .get("paneId")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let state = req
+                .params
+                .get("state")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let semantics = req.params.get("semantics").cloned();
+            let resources = req.params.get("resources").cloned();
+            let guardian_log = req.params.get("guardianLog").cloned();
+            let host_pressure = req.params.get("hostPressure").cloned();
+            mux.lock().expect("mux").report_semantics(
+                pane_id,
+                state,
+                semantics,
+                resources,
+                guardian_log.as_ref(),
+                host_pressure,
+            );
+            ok(&req.id, json!({"ok": true}))
+        }),
+        "guardian.broadcast" => gated(conn, req, "guardian.broadcast", |_| {
+            let message = req
+                .params
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let mut guard = mux.lock().expect("mux");
+            let ids: Vec<String> = guard
+                .panes
+                .values()
+                .filter(|p| p.harness.is_some())
+                .map(|p| p.id.clone())
+                .collect();
+            for id in ids {
+                let _ = guard.send_keys(&id, message);
+            }
+            ok(&req.id, json!({"ok": true}))
+        }),
         other => error(
             &req.id,
             "unknown_method",
             &format!("unknown method {other}"),
-            "Supported: ping, session.snapshot, pane.list, pane.spawn, pane.send_keys, pane.close, pane.read, peel, events.subscribe, hello, client.attach",
+            "Supported: ping, session.snapshot, pane.list, pane.spawn, pane.send_keys, pane.close, pane.read, tab.close, peel, events.subscribe, hello, client.attach, pane.report_semantics",
         ),
     }
 }
@@ -390,7 +570,15 @@ fn allowed(class: CallerClass, method: &str) -> bool {
         CallerClass::Cli | CallerClass::Tui => true,
         CallerClass::Intel => matches!(
             method,
-            "hello" | "ping" | "pane.list" | "session.snapshot" | "events.subscribe" | "pane.read"
+            "hello"
+                | "ping"
+                | "pane.list"
+                | "session.snapshot"
+                | "events.subscribe"
+                | "pane.read"
+                | "pane.report_semantics"
+                | "pane.send_keys"
+                | "guardian.broadcast"
         ),
         CallerClass::Pane => matches!(
             method,
@@ -405,33 +593,44 @@ fn allowed(class: CallerClass, method: &str) -> bool {
     }
 }
 
-fn handle_hello(
+async fn handle_hello(
     mux: &Arc<Mutex<Mux>>,
     lock: &Arc<Mutex<Lock>>,
+    hub: &Arc<IntelHub>,
     conn: &mut Conn,
     req: &Request,
+    writer: &Arc<tokio::sync::Mutex<OwnedWriteHalf>>,
 ) -> Value {
     let token = req
         .params
         .get("token")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let mut guard = mux.lock().expect("mux");
-    let caller = conn.class.as_ref().ok().copied();
-    match peer::intel_hello(
-        token,
-        &guard.intel_token,
-        conn.peer_pid,
-        guard.intel_pid,
-        caller,
-    ) {
+    let hello = {
+        let mut guard = mux.lock().expect("mux");
+        let caller = conn.class.as_ref().ok().copied();
+        match peer::intel_hello(
+            token,
+            &guard.intel_token,
+            conn.peer_pid,
+            guard.intel_pid,
+            caller,
+        ) {
+            Ok(pid) => {
+                guard.intel_pid = Some(pid);
+                guard.intel_connected = true;
+                Ok(pid)
+            }
+            Err(err) => Err(err),
+        }
+    };
+    match hello {
         Ok(pid) => {
-            guard.intel_pid = Some(pid);
-            drop(guard);
             if let Ok(mut held) = lock.lock() {
                 let _ = held.set_intel_pid(Some(pid));
             }
             conn.class = Ok(CallerClass::Intel);
+            hub.attach(writer.clone()).await;
             ok(&req.id, json!({"ok": true, "class": "intel"}))
         }
         Err(err) => error(&req.id, "permission_denied", &err.to_string(), err.fix()),

@@ -1,8 +1,8 @@
 /**
  * Headless mux CLI: spawn gmuxd if the lock is free, then speak NDJSON on mux.sock.
  *
- * `MuxGateway` is not wired (Task 5). This file is the control-plane client for
- * `gmux spawn` / `gmux panes ls` / `gmux snapshot`.
+ * `gmux spawn` / `panes ls` / `snapshot` stay a thin RPC client. The sidecar
+ * path uses `MuxClient` (`MuxGateway`) instead of this helper.
  */
 
 import { spawn as spawnProcess } from "node:child_process";
@@ -31,13 +31,13 @@ interface RpcReply {
   error?: RpcError;
 }
 
-interface MuxLockFile {
+export interface MuxLockFile {
   muxPid?: number;
   intelPid?: number | null;
   startedAt?: string;
 }
 
-function pidAlive(pid: number): boolean {
+export function muxPidAlive(pid: number): boolean {
   if (!Number.isFinite(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
@@ -47,7 +47,7 @@ function pidAlive(pid: number): boolean {
   }
 }
 
-async function readMuxLock(): Promise<MuxLockFile | null> {
+export async function readMuxLock(): Promise<MuxLockFile | null> {
   try {
     return JSON.parse(await readFile(muxLockPath(), "utf8")) as MuxLockFile;
   } catch {
@@ -156,7 +156,7 @@ async function spawnGmuxd(): Promise<void> {
 
 export async function ensureMuxd(): Promise<void> {
   const lock = await readMuxLock();
-  const live = lock?.muxPid != null && pidAlive(lock.muxPid);
+  const live = lock?.muxPid != null && muxPidAlive(lock.muxPid);
   if (live) {
     try {
       await waitForSocket(muxSocketPath(), 1000);
@@ -168,6 +168,34 @@ export async function ensureMuxd(): Promise<void> {
     }
   }
   await spawnGmuxd();
+}
+
+function spawnSidecarProcess(): void {
+  const script = process.argv[1];
+  if (!script) return;
+  const child = spawnProcess(process.execPath, [script, "daemon", "--sidecar"], {
+    detached: true,
+    stdio: "ignore",
+    env: { ...process.env, GMUX_CHILD: "1" },
+  });
+  child.unref();
+}
+
+/**
+ * Start order is mux → sidecar → TUI. If intel is still down after 2s the TUI
+ * still attaches (sidebar shows intel down).
+ */
+export async function ensureSidecar(): Promise<void> {
+  await ensureMuxd();
+  const lock = await readMuxLock();
+  if (lock?.intelPid != null && muxPidAlive(lock.intelPid)) return;
+  spawnSidecarProcess();
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    const cur = await readMuxLock();
+    if (cur?.intelPid != null && muxPidAlive(cur.intelPid)) return;
+    await new Promise((r) => setTimeout(r, 40));
+  }
 }
 
 export async function muxRpc(method: string, params: Record<string, unknown> = {}): Promise<unknown> {

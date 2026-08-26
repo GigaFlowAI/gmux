@@ -187,7 +187,7 @@ function shellsAlreadyAloneTogether(allPanes: OrganizePane[], shellPanes: Organi
 // LLM planner: prompt + reply parsing (pure) and the planner itself
 // ---------------------------------------------------------------------------
 
-const ORGANIZE_TIMEOUT_MS = 120_000;
+export const ORGANIZE_TIMEOUT_MS = 120_000;
 const MAX_PLAN_STEPS = 200;
 
 function formatPaneLine(pane: OrganizePane): string {

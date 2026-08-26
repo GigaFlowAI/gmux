@@ -22,4 +22,15 @@ describe("FakeMuxGateway", () => {
     expect("selectLayout" in gw).toBe(false);
     expect("swapPane" in gw).toBe(false);
   });
+
+  it("peel does not await extract", async () => {
+    const gw = new FakeMuxGateway();
+    const extract = new Promise(() => {}); // never resolves
+    const parent = await gw.spawn({ cwd: "/t", argv: ["zsh"], focus: true });
+    gw.setClientFocus("c1", parent.paneId);
+    const started = Date.now();
+    await gw.peel("c1"); // must not take extract
+    expect(Date.now() - started).toBeLessThan(50);
+    void extract;
+  });
 });

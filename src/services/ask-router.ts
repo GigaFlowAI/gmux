@@ -21,7 +21,7 @@ import { runProviderCommand } from "./provider-process.js";
 export type AskIntent = "organize" | "ask";
 
 /** Kept tight: this is a single-word classification, not a summary or an answer. */
-const CLASSIFY_TIMEOUT_MS = 30_000;
+export const CLASSIFY_TIMEOUT_MS = 30_000;
 
 export interface ClassifyDeps {
   /**

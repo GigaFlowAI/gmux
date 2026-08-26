@@ -93,6 +93,8 @@ pub struct Grid {
     parser: Parser,
     screen: Screen,
     generation: u64,
+    /// Unix millis of last PTY byte. 0 = never. Used for mux-only glyphs.
+    pub last_byte_ms: u64,
 }
 
 impl Grid {
@@ -118,12 +120,20 @@ impl Grid {
                 scrollback: VecDeque::new(),
             },
             generation: 0,
+            last_byte_ms: 0,
         }
     }
 
     pub fn feed(&mut self, bytes: &[u8]) {
         self.parser.advance(&mut self.screen, bytes);
         self.generation = self.generation.saturating_add(1);
+        if !bytes.is_empty() {
+            self.last_byte_ms = unix_ms();
+        }
+    }
+
+    pub fn set_last_byte_ms(&mut self, ms: u64) {
+        self.last_byte_ms = ms;
     }
 
     pub fn size(&self) -> (u16, u16) {
@@ -548,4 +558,11 @@ impl Perform for Screen {
             _ => {}
         }
     }
+}
+
+pub(crate) fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }

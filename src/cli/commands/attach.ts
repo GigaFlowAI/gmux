@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import type { Command } from "commander";
 
 import { GmuxError } from "../../core/errors.js";
-import { ensureMuxd, findGmuxd } from "./spawn.js";
+import { ensureMuxd, ensureSidecar, findGmuxd } from "./spawn.js";
 
 /**
  * Start or connect to gmuxd, then exec the full-bleed TUI (`gmuxd attach`).
@@ -16,6 +16,7 @@ export function registerAttach(program: Command): void {
     .option("--cwd <dir>", "workspace cwd")
     .action(async (options: { cwd?: string }) => {
       await ensureMuxd();
+      await ensureSidecar();
       const bin = findGmuxd();
       if (!bin) {
         throw new GmuxError("gmuxd is not built", {

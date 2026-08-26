@@ -2,7 +2,7 @@ import { getEventListeners } from "node:events";
 import { describe, expect, it } from "vitest";
 import { FakeTmuxGateway } from "./fixtures/fake-gateway.js";
 import { WorkspaceModel } from "../src/services/workspace.js";
-import { runDaemonLoop } from "../src/cli/commands/daemon.js";
+import { renderStatus, runDaemonLoop } from "../src/cli/commands/daemon.js";
 
 describe("runDaemonLoop", () => {
   it("ticks until aborted", async () => {
@@ -49,5 +49,14 @@ describe("runDaemonLoop", () => {
     expect(ticks).toBeGreaterThanOrEqual(15);
     expect(maxListeners).toBe(1);
     expect(getEventListeners(ac.signal, "abort").length).toBe(0);
+  });
+});
+
+describe("renderStatus", () => {
+  it("status prints mux and intel independently", async () => {
+    // with a fake lock { muxPid: 1, intelPid: null }
+    const out = renderStatus({ mux: { up: true, pid: 1 }, intel: { up: false, pid: null } });
+    expect(out).toMatch(/mux: up \(pid 1\)/);
+    expect(out).toMatch(/intel: down/);
   });
 });

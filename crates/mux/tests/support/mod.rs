@@ -172,4 +172,30 @@ impl Harness {
             .read_pane(pane_id, source, lines)
             .unwrap()
     }
+
+    pub fn report_semantics(&self, pane_id: &str, state: &str, semantics: serde_json::Value) {
+        self.mux.lock().unwrap().report_semantics(
+            pane_id,
+            Some(state.into()),
+            Some(semantics),
+            None,
+            None,
+            None,
+        );
+    }
+
+    pub fn set_intel_connected(&self, up: bool) {
+        self.mux.lock().unwrap().intel_connected = up;
+    }
+
+    pub fn set_last_byte_ms(&self, pane_id: &str, ms: u64) {
+        let mux = self.mux.lock().unwrap();
+        mux.panes
+            .get(pane_id)
+            .expect("pane")
+            .grid
+            .lock()
+            .expect("grid")
+            .set_last_byte_ms(ms);
+    }
 }

@@ -3,8 +3,8 @@
  * shape.
  *
  * `TerminalSensor` watches a plain shell (or any harness we can't identify a
- * transcript for) via tmux `capture-pane`, and keeps a `pipe-pane` log running
- * so a later "show me the raw tail" view has more than 200 lines to work with.
+ * transcript for). On tmux: `capture-pane` plus a `pipe-pane` log. On mux
+ * (sidecar): `readGrid` → `lines[].text`; no `startPipe`.
  * `AgentSensor` watches a known harness's transcript file directly — richer
  * and cheaper than scraping a terminal, but only available once the pane is
  * linked to a session.
@@ -21,7 +21,15 @@ import { paneLogPath } from "../core/paths.js";
 import { readJsonl, RingBuffer } from "../adapters/jsonl.js";
 import { cachedRecords } from "./index-store.js";
 import { rotateIfLarge, pruneLog, MAX_PANE_LOG_BYTES } from "./log-rotation.js";
+import type { MuxGateway } from "./mux-gateway.js";
 import type { TmuxGateway } from "./tmux-gateway.js";
+
+/** Terminal capture: tmux `capture`/`pipe-pane`, or mux `readGrid`. */
+export type TerminalGateway = TmuxGateway | MuxGateway;
+
+function isMuxGateway(gateway: TerminalGateway): gateway is MuxGateway {
+  return "readGrid" in gateway;
+}
 
 /** How many transcript rows AgentSensor keeps in view per observe(). */
 const AGENT_TAIL_CAPACITY = 40;
@@ -47,33 +55,45 @@ export class TerminalSensor implements Sensor {
   private lastActivityTs = 0;
   private piping = false;
 
-  constructor(private readonly identity: PaneIdentity, private readonly gateway: TmuxGateway) {}
+  constructor(private readonly identity: PaneIdentity, private readonly gateway: TerminalGateway) {}
 
   async observe(now: number): Promise<Observation> {
-    if (!this.piping) {
-      await this.gateway.startPipe(this.identity.paneId, paneLogPath(this.identity.paneId)).catch(() => {});
-      this.piping = true;
+    let tailLines: string[];
+    if (isMuxGateway(this.gateway)) {
+      // Sidecar path: VTE grid text. No pipe-pane — mux owns the PTY.
+      const grid = await this.gateway.readGrid(this.identity.paneId);
+      tailLines = grid.lines.map((l) => l.text).filter((l) => l.length > 0);
+    } else {
+      if (!this.piping) {
+        await this.gateway.startPipe(this.identity.paneId, paneLogPath(this.identity.paneId)).catch(() => {});
+        this.piping = true;
+      }
+      const text = await this.gateway.capture(this.identity.paneId, 200);
+      tailLines = text.split("\n").filter((l) => l.length > 0);
+      await rotateIfLarge(paneLogPath(this.identity.paneId), MAX_PANE_LOG_BYTES).catch(() => {});
     }
-    const text = await this.gateway.capture(this.identity.paneId, 200);
-    const h = hash(text);
+    const h = hash(tailLines.join("\n"));
     if (h !== this.lastHash) {
       this.lastActivityTs = now;
       this.lastHash = h;
     }
-    await rotateIfLarge(paneLogPath(this.identity.paneId), MAX_PANE_LOG_BYTES).catch(() => {});
-    const tailLines = text.split("\n").filter((l) => l.length > 0);
     return {
       paneId: this.identity.paneId,
       kind: "terminal",
       ts: now,
       tailLines,
       lastActivityTs: this.lastActivityTs,
+      toolStarts: [],
     };
   }
 
   async teardown(): Promise<void> {
-    if (this.piping) await this.gateway.stopPipe(this.identity.paneId).catch(() => {});
-    await pruneLog(paneLogPath(this.identity.paneId)).catch(() => {});
+    if (this.piping && !isMuxGateway(this.gateway)) {
+      await this.gateway.stopPipe(this.identity.paneId).catch(() => {});
+    }
+    if (!isMuxGateway(this.gateway)) {
+      await pruneLog(paneLogPath(this.identity.paneId)).catch(() => {});
+    }
   }
 }
 
@@ -249,7 +269,7 @@ export class AgentSensor implements Sensor {
  * Picks the richer sensor whenever the pane is resolvable to a known
  * harness session, else falls back to the terminal sensor.
  */
-export function makeSensor(identity: PaneIdentity, gateway: TmuxGateway): Sensor {
+export function makeSensor(identity: PaneIdentity, gateway: TerminalGateway): Sensor {
   if (identity.harness && identity.sessionId) return new AgentSensor(identity);
   return new TerminalSensor(identity, gateway);
 }

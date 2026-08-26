@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 import { FakeTmuxGateway } from "./fixtures/fake-gateway.js";
+import { FakeMuxGateway } from "../src/services/mux-gateway.js";
 import {
   AgentSensor,
   hasToolError,
@@ -30,6 +31,32 @@ describe("TerminalSensor", () => {
     expect(obs.tailLines).toEqual(["line a", "line b"]);
     expect(obs.lastActivityTs).toBe(5000);
   });
+  it("on MuxGateway uses readGrid and does not startPipe", async () => {
+    const gw = new FakeMuxGateway();
+    const spawned = await gw.spawn({ cwd: "/x", argv: ["zsh"] });
+    gw.setGrid(spawned.paneId, {
+      paneId: spawned.paneId,
+      cols: 80,
+      rows: 24,
+      lines: [
+        { text: "line a", intensity: [1, 1, 1, 1, 1, 1] },
+        { text: "line b", intensity: [1, 1, 1, 1, 1, 1] },
+      ],
+      alternateScreen: false,
+      foregroundCommand: "zsh",
+    });
+    const muxIdent: PaneIdentity = {
+      paneId: spawned.paneId, windowId: null, active: false, harness: null, sessionId: null,
+      cwd: "/x", command: "zsh", pid: 10, tabId: spawned.tabId,
+    };
+    const s = new TerminalSensor(muxIdent, gw);
+    const obs = await s.observe(5000);
+    expect(obs.kind).toBe("terminal");
+    expect(obs.tailLines).toEqual(["line a", "line b"]);
+    expect(obs.toolStarts).toEqual([]);
+    expect("startPipe" in gw).toBe(false);
+  });
+
   it("only bumps lastActivityTs when the content changes", async () => {
     const gw = new FakeTmuxGateway();
     gw.setCapture("%1", "same");

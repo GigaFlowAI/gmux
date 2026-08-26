@@ -1,19 +1,16 @@
 /**
  * `gmux daemon` — the gmux workspace daemon.
  *
- * `run` starts the interval loop (tmux registry diff → sensors → classify →
- * write to the model) plus the `ModelServer` socket, foreground, supervised by
- * a PID lockfile so a second `gmux daemon run` refuses to double-start. `status`
- * and `stop` read that same lock to report on / signal the running process.
- *
- * The lock is a small mirror of `services/auto-summarize.ts`'s lock: same
- * shape (`{ pid, startedAt }`), same staleness rule (owner dead, or too old).
- * It lives under `gmuxDir()` rather than `cacheDir()` directly because it is
- * gmux-specific ephemeral state, not shared with the rest of gmux.
+ * Without `--sidecar` this is still the tmux-watching tick plus `daemon.sock`
+ * (kept for old tests / leftover tmux clients). `--sidecar` connects to
+ * `mux.sock`, presents `intel.token`, and patches mux panes. `status` prints
+ * mux vs intel independently from `mux.lock`. `stop` SIGTERMs intel then mux
+ * (that kills agents; the copy says so).
  */
 
 import type { Command } from "commander";
 
+import { GmuxError } from "../../core/errors.js";
 import type { GmuxConfig } from "../../core/gmux-types.js";
 import { readConfig, resolveGmuxConfig } from "../../services/config.js";
 import { Daemon, type DaemonDeps } from "../../services/daemon.js";
@@ -29,14 +26,18 @@ import {
 } from "../../services/daemon-lock.js";
 import { ModelServer } from "../../services/daemon-socket.js";
 import { Guardian } from "../../services/guardian.js";
+import { MuxClient } from "../../services/mux-client.js";
+import type { MuxGateway } from "../../services/mux-gateway.js";
 import { ResourceMonitor } from "../../services/resources.js";
 import { defaultLabelProvider, type LabelProvider, SemanticWorker } from "../../services/semantic.js";
 import { SemanticGate } from "../../services/semantic-gate.js";
+import { SidecarDaemon, type SidecarDaemonDeps } from "../../services/sidecar-daemon.js";
 import { RealTmuxGateway, type TmuxGateway } from "../../services/tmux-gateway.js";
 import { WorkspaceModel } from "../../services/workspace.js";
 import { paintFromSnapshot } from "../border-client.js";
-import { dim, green, red, yellow } from "../format.js";
+import { dim, green, red } from "../format.js";
 import { enableBorder } from "../tmux-label.js";
+import { muxPidAlive, readMuxLock } from "./spawn.js";
 
 export interface LoopOpts {
   tickMs: number;
@@ -60,14 +61,25 @@ export interface LoopOpts {
  * emits `MaxListenersExceededWarning` after ~10 ticks. `wake` is the current
  * iteration's resolver; the single listener just calls whichever one is live.
  */
-export async function runDaemonLoop(deps: DaemonDeps, opts: LoopOpts): Promise<void> {
-  const daemon = new Daemon(deps);
+export interface ProcessStatus {
+  up: boolean;
+  pid: number | null;
+}
+
+/** mux and intel are independent — a hung sidecar does not make mux look down. */
+export function renderStatus(s: { mux: ProcessStatus; intel: ProcessStatus }): string {
+  const mux = s.mux.up && s.mux.pid != null ? `mux: up (pid ${s.mux.pid})` : "mux: down";
+  const intel = s.intel.up && s.intel.pid != null ? `intel: up (pid ${s.intel.pid})` : "intel: down";
+  return `${mux}\n${intel}\n`;
+}
+
+async function runTickLoop(tickOnce: () => Promise<void>, opts: LoopOpts): Promise<void> {
   let wake: (() => void) | undefined;
   const onAbort = (): void => wake?.();
   opts.signal.addEventListener("abort", onAbort, { once: true });
   try {
     while (!opts.signal.aborted) {
-      await daemon.tickOnce().catch(() => {
+      await tickOnce().catch(() => {
         /* keep the loop alive */
       });
       opts.onTick?.();
@@ -88,6 +100,16 @@ export async function runDaemonLoop(deps: DaemonDeps, opts: LoopOpts): Promise<v
     // either way. Guarantees no timer or listener outlives the call.
     opts.signal.removeEventListener("abort", onAbort);
   }
+}
+
+export async function runDaemonLoop(deps: DaemonDeps, opts: LoopOpts): Promise<void> {
+  const daemon = new Daemon(deps);
+  await runTickLoop(() => daemon.tickOnce(), opts);
+}
+
+export async function runSidecarLoop(deps: SidecarDaemonDeps, opts: LoopOpts): Promise<void> {
+  const daemon = new SidecarDaemon(deps);
+  await runTickLoop(() => daemon.tickOnce(), opts);
 }
 
 /**
@@ -119,6 +141,23 @@ export function buildDaemonDeps(
   return { gateway, model, now: () => Date.now(), semantic, resources, guardian };
 }
 
+export function buildSidecarDeps(
+  gateway: MuxGateway,
+  model: WorkspaceModel,
+  gmuxCfg: GmuxConfig,
+  provider: LabelProvider,
+  report?: SidecarDaemonDeps["report"],
+): SidecarDaemonDeps {
+  const semantic = new SemanticWorker(model, provider, new SemanticGate());
+  const resources = new ResourceMonitor();
+  const guardian = new Guardian({
+    policy: gmuxCfg.guardianPolicy,
+    threshold: gmuxCfg.memoryThreshold,
+    cooldownSeconds: gmuxCfg.cooldownSeconds,
+  });
+  return { gateway, model, now: () => Date.now(), semantic, resources, guardian, report };
+}
+
 // --- Lock -------------------------------------------------------------
 
 // Re-exported so existing callers of this module (and its tests) keep
@@ -138,13 +177,51 @@ export {
 
 // --- Command ------------------------------------------------------------
 
+async function runSidecarForeground(): Promise<void> {
+  const client = await MuxClient.connect();
+  const config = await readConfig();
+  const gmuxCfg = resolveGmuxConfig(config);
+  const provider = await defaultLabelProvider();
+  const model = new WorkspaceModel();
+  const deps = buildSidecarDeps(client, model, gmuxCfg, provider, (patch) => client.reportSemantics(patch));
+  const ac = new AbortController();
+  const stop = (): void => ac.abort();
+  try {
+    process.on("SIGINT", stop);
+    process.on("SIGTERM", stop);
+    process.stdout.write(`${green("gmux intel sidecar started")} (pid ${process.pid})\n`);
+    await runSidecarLoop(deps, { tickMs: gmuxCfg.tickMs, signal: ac.signal });
+  } finally {
+    process.off("SIGINT", stop);
+    process.off("SIGTERM", stop);
+    await client.close().catch(() => {});
+  }
+}
+
 export function registerDaemon(program: Command): void {
   const cmd = program.command("daemon").description("run and manage the gmux workspace daemon");
+  cmd.option("--sidecar", "run as the intel sidecar against gmuxd (mux.sock, not tmux)");
 
   cmd
     .command("run", { isDefault: true })
     .description("run the daemon loop in the foreground")
-    .action(async () => {
+    .option("--sidecar", "run as the intel sidecar against gmuxd (mux.sock, not tmux)")
+    .action(async (options: { sidecar?: boolean }, command: Command) => {
+      const sidecar = Boolean(options.sidecar) || Boolean(command.parent?.opts()?.sidecar);
+      if (sidecar) {
+        try {
+          await runSidecarForeground();
+        } catch (error) {
+          const err = error instanceof GmuxError ? error : new GmuxError((error as Error).message, {
+            fix: "Start gmuxd first (`gmux attach` or `gmux spawn`). Start order is mux → sidecar → TUI.",
+          });
+          process.stderr.write(`${red("error")} ${err.message}\n`);
+          if (err.fix) process.stderr.write(`${dim("fix")} ${err.fix}\n`);
+          process.exitCode = 1;
+        }
+        return;
+      }
+
       if (!(await acquireDaemonLock())) {
         const existing = await readDaemonLock();
         process.stderr.write(
@@ -209,16 +286,19 @@ export function registerDaemon(program: Command): void {
 
   cmd
     .command("status")
-    .description("show whether the daemon is running")
+    .description("show whether mux and intel are running")
     .action(async () => {
-      const lock = await readDaemonLock();
-      if (!lock) {
-        process.stdout.write(`${dim("stopped")} — no daemon lock\n`);
-      } else if (isDaemonLockStale(lock)) {
-        process.stdout.write(`${yellow("stale")} — lock left by pid ${lock.pid} (${lock.startedAt})\n`);
-      } else {
-        process.stdout.write(`${green("running")} (pid ${lock.pid}, started ${lock.startedAt})\n`);
-      }
+      const lock = await readMuxLock();
+      const muxPid = lock?.muxPid ?? null;
+      const intelPid = lock?.intelPid ?? null;
+      const muxUp = muxPid != null && muxPidAlive(muxPid);
+      const intelUp = intelPid != null && muxPidAlive(intelPid);
+      process.stdout.write(
+        renderStatus({
+          mux: { up: muxUp, pid: muxUp ? muxPid : null },
+          intel: { up: intelUp, pid: intelUp ? intelPid : null },
+        }),
+      );
 
       const snap = await readSnapshotFile();
       if (snap) {
@@ -232,16 +312,32 @@ export function registerDaemon(program: Command): void {
 
   cmd
     .command("stop")
-    .description("stop the running daemon")
+    .description("stop intel then mux (this kills agents)")
     .action(async () => {
-      const lock = await readDaemonLock();
-      if (!lock || isDaemonLockStale(lock)) {
+      const lock = await readMuxLock();
+      const muxPid = lock?.muxPid != null && muxPidAlive(lock.muxPid) ? lock.muxPid : null;
+      const intelPid = lock?.intelPid != null && muxPidAlive(lock.intelPid) ? lock.intelPid : null;
+      if (muxPid != null || intelPid != null) {
+        if (intelPid != null) {
+          try { process.kill(intelPid, "SIGTERM"); } catch { /* already gone */ }
+        }
+        if (muxPid != null) {
+          try { process.kill(muxPid, "SIGTERM"); } catch { /* already gone */ }
+        }
+        process.stdout.write(
+          `${green("stopped")} intel${intelPid != null ? ` (pid ${intelPid})` : ""} then mux${muxPid != null ? ` (pid ${muxPid})` : ""} — this kills agents\n`,
+        );
+        return;
+      }
+
+      const tmuxLock = await readDaemonLock();
+      if (!tmuxLock || isDaemonLockStale(tmuxLock)) {
         process.stdout.write(`${dim("nothing was running")}\n`);
         return;
       }
       try {
-        process.kill(lock.pid, "SIGTERM");
-        process.stdout.write(`${green("stopped")} (sent SIGTERM to pid ${lock.pid})\n`);
+        process.kill(tmuxLock.pid, "SIGTERM");
+        process.stdout.write(`${green("stopped")} (sent SIGTERM to pid ${tmuxLock.pid})\n`);
       } catch {
         process.stdout.write(`${dim("nothing was running")}\n`);
       }
