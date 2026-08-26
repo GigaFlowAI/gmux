@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { muxDoctorChecks } from "../src/cli/commands/doctor.js";
+import { leftoverTmuxCheck, muxDoctorChecks } from "../src/cli/commands/doctor.js";
 import { jsonEnvelope } from "../src/cli/format.js";
 import { SCHEMA_VERSION } from "../src/core/types.js";
 
@@ -44,6 +44,20 @@ describe("muxDoctorChecks", () => {
     }).find((c) => c.name.includes("ctrl+t"));
     expect(note?.ok).toBe(true);
     expect(note?.detail).toMatch(/Ghostty|iTerm/);
+  });
+
+  it("leftover tmux copy says finish, uninstall, attach — never overlay available", () => {
+    const present = leftoverTmuxCheck({ raw: "3.4" });
+    expect(present.detail).toMatch(/Finish work in tmux/i);
+    expect(present.detail).toMatch(/gmux tmux uninstall/);
+    expect(present.detail).toMatch(/gmux attach/);
+    expect(present.detail).not.toMatch(/overlay/i);
+    expect(present.fix).toMatch(/gmux tmux uninstall/);
+    expect(present.fix).toMatch(/gmux attach/);
+
+    const missing = leftoverTmuxCheck(null);
+    expect(missing.detail).toMatch(/gmux attach/);
+    expect(missing.detail).not.toMatch(/overlay/i);
   });
 
   it("keeps doctor --json on SCHEMA_VERSION 1", () => {

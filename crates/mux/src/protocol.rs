@@ -510,15 +510,8 @@ async fn dispatch(
                 .and_then(Value::as_str)
                 .unwrap_or("");
             let keys = req.params.get("keys").and_then(Value::as_str).unwrap_or("");
-            if let Ok(CallerClass::Pane) = conn.class {
-                if peer::is_sibling_target(conn.env_pane_id.as_deref(), pane_id) {
-                    return error(
-                        &req.id,
-                        "permission_denied",
-                        "pane may not send_keys to siblings",
-                        "A pane can only type into itself; sibling send_keys is denied",
-                    );
-                }
+            if let Some(denied) = apply_send_keys_acl(conn, req, pane_id) {
+                return denied;
             }
             match mux.lock().expect("mux").send_keys(pane_id, keys) {
                 Ok(()) => ok(&req.id, json!({"ok": true})),
@@ -720,6 +713,21 @@ fn gated(
     }
 }
 
+/// After `allowed()` admits `pane.send_keys`: a pane may type into itself only.
+fn apply_send_keys_acl(conn: &Conn, req: &Request, pane_id: &str) -> Option<Value> {
+    if let Ok(CallerClass::Pane) = conn.class {
+        if peer::is_sibling_target(conn.env_pane_id.as_deref(), pane_id) {
+            return Some(error(
+                &req.id,
+                "permission_denied",
+                "pane may not send_keys to siblings",
+                "A pane can only type into itself; sibling send_keys is denied",
+            ));
+        }
+    }
+    None
+}
+
 pub(crate) fn allowed(class: CallerClass, method: &str) -> bool {
     match class {
         CallerClass::Cli | CallerClass::Tui => true,
@@ -741,6 +749,7 @@ pub(crate) fn allowed(class: CallerClass, method: &str) -> bool {
                 | "pane.list"
                 | "session.snapshot"
                 | "pane.spawn"
+                | "pane.send_keys"
                 | "events.subscribe"
                 | "pane.read"
         ),
@@ -1285,7 +1294,10 @@ mod tests {
     #[test]
     fn pane_cannot_organize_apply_or_send_keys_siblings() {
         assert!(!allowed(CallerClass::Pane, "organize.apply"));
-        assert!(!allowed(CallerClass::Pane, "pane.send_keys"));
+        assert!(
+            allowed(CallerClass::Pane, "pane.send_keys"),
+            "pane.send_keys is admitted; sibling targeting is a dispatch-time deny"
+        );
         assert!(!allowed(CallerClass::Pane, "pane.close"));
         assert!(!allowed(CallerClass::Pane, "tab.new"));
         assert!(allowed(CallerClass::Pane, "peel"));
@@ -1293,6 +1305,52 @@ mod tests {
         assert!(peer::is_sibling_target(Some("p_a"), "p_b"));
         assert!(!peer::is_sibling_target(Some("p_a"), "p_a"));
         assert!(peer::is_sibling_target(None, "p_a"));
+    }
+
+    fn dispatch_send_keys(class: CallerClass, env: Option<&str>, target: &str) -> Value {
+        let mut conn = Conn {
+            class: Ok(class),
+            client_id: None,
+            peer_pid: 1,
+            env_pane_id: env.map(str::to_string),
+            subscribed: false,
+        };
+        let req = Request {
+            id: json!("1"),
+            method: "pane.send_keys".into(),
+            params: json!({ "paneId": target, "keys": "a" }),
+        };
+        gated(&mut conn, &req, "pane.send_keys", |conn| {
+            let pane_id = req
+                .params
+                .get("paneId")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if let Some(denied) = apply_send_keys_acl(conn, &req, pane_id) {
+                return denied;
+            }
+            ok(&req.id, json!({ "ok": true }))
+        })
+    }
+
+    #[test]
+    fn pane_send_keys_self_allowed_sibling_denied() {
+        let self_ok = dispatch_send_keys(CallerClass::Pane, Some("p_a"), "p_a");
+        assert_eq!(self_ok["result"]["ok"], true, "{self_ok}");
+        assert!(self_ok.get("error").is_none());
+
+        let sibling = dispatch_send_keys(CallerClass::Pane, Some("p_a"), "p_b");
+        assert_eq!(sibling["error"]["code"], "permission_denied", "{sibling}");
+        assert!(
+            sibling["error"]["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("siblings"),
+            "{sibling}"
+        );
+
+        let intel = dispatch_send_keys(CallerClass::Intel, None, "p_a");
+        assert_eq!(intel["error"]["code"], "permission_denied", "{intel}");
     }
 
     #[test]

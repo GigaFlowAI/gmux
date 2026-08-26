@@ -29,4 +29,18 @@ describe("gmux docs + bindings", () => {
     expect(readme).toMatch(/fixtures\/grids/);
     expect(readme).toMatch(/synthetic/i);
   });
+
+  it("documents fetch-if-missing gmuxd triples with a checksum pin", () => {
+    const readme = readFileSync("README.md", "utf8");
+    const doc = readFileSync("docs/gmux.md", "utf8");
+    for (const text of [readme, doc]) {
+      expect(text).toMatch(/fetch-if-missing/i);
+      expect(text).toMatch(/GitHub Releases/);
+      expect(text).toMatch(/checksum/i);
+      expect(text).toMatch(/aarch64-apple-darwin/);
+      expect(text).toMatch(/x86_64-apple-darwin/);
+      expect(text).toMatch(/x86_64-unknown-linux-gnu/);
+      expect(text).toMatch(/aarch64-unknown-linux-gnu/);
+    }
+  });
 });

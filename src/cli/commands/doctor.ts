@@ -15,7 +15,7 @@ import { configExists, isChildProcess, readConfig } from "../../services/config.
 import { onPath } from "../../services/providers.js";
 import { defaultSummaryProvider } from "../../services/summarize.js";
 import { discover } from "../../services/index-store.js";
-import { supportsDisplayPopup, tmuxVersion } from "../../services/tmux.js";
+import { tmuxVersion } from "../../services/tmux.js";
 import { inspectTmuxBindings, realTmuxFs } from "./tmux.js";
 import { dim, green, jsonEnvelope, red, yellow } from "../format.js";
 import { findGmuxd, muxPidAlive, readMuxLock, type MuxLockFile } from "./spawn.js";
@@ -82,6 +82,27 @@ export function muxDoctorChecks(input: {
   ];
 }
 
+const TMUX_MIGRATE_FIX = "Finish work in tmux, then `gmux tmux uninstall` and `gmux attach`.";
+
+/** Leftover tmux is informational. cockpit/overlay always throw — never "overlay available". */
+export function leftoverTmuxCheck(tmuxV: { raw: string } | null): DoctorCheck {
+  if (!tmuxV) {
+    return {
+      name: "tmux (leftover)",
+      ok: true,
+      optional: true,
+      detail: "not found — using gmux attach",
+    };
+  }
+  return {
+    name: "tmux (leftover)",
+    ok: true,
+    optional: true,
+    detail: `${tmuxV.raw} — leftover. Finish work in tmux, then gmux tmux uninstall and gmux attach`,
+    fix: TMUX_MIGRATE_FIX,
+  };
+}
+
 /**
  * Report what is present, what is missing, and — for anything missing — the
  * exact command that fixes it. No diagnostic should ever leave you guessing.
@@ -123,25 +144,7 @@ export function registerDoctor(program: Command): void {
         ...(fzf ? {} : { fix: "brew install fzf" }),
       });
 
-      const tmuxV = await tmuxVersion();
-      const tmuxOk = supportsDisplayPopup(tmuxV);
-      checks.push({
-        name: "tmux (leftover)",
-        ok: tmuxOk,
-        optional: true,
-        detail: tmuxV
-          ? tmuxOk
-            ? `${tmuxV.raw} — \`ctrl+g\` overlay available`
-            : `${tmuxV.raw} — too old; the overlay needs tmux >= 3.2`
-          : "not found — leftover tmux overlay is unavailable (prefer `gmux attach`)",
-        ...(tmuxOk
-          ? {}
-          : {
-              fix: tmuxV
-                ? "Upgrade tmux to 3.2 or newer, or finish in tmux and run `gmux attach`."
-                : "Prefer `gmux attach`. For leftover tmux: brew install tmux.",
-            }),
-      });
+      checks.push(leftoverTmuxCheck(await tmuxVersion()));
 
       const bindings = inspectTmuxBindings(homedir(), realTmuxFs());
       const bindingsMigrated = !bindings.installed && !bindings.leftoverLegacy;

@@ -95,4 +95,17 @@ gmux attributes memory two ways: `perPaneRss` (per-pane subtree RSS, for ranking
 `gmux setup` also asks **agentHarness** (the interactive CLI for new panes /
 peels). That is not `provider` (the summarizer). `CONFIG_VERSION` stays 1.
 
+## Packaging
+
+`gmux attach` **fetch-if-missing** `gmuxd` from GitHub Releases, checksum
+pinned in the npm package. Supported triples:
+
+- `aarch64-apple-darwin`
+- `x86_64-apple-darwin`
+- `x86_64-unknown-linux-gnu`
+- `aarch64-unknown-linux-gnu`
+
+Binary shipping can follow attach once CI produces artifacts. Not the npm
+default until captured peel extract fixtures exist.
+
 See the project [README](../README.md) for the quickstart and rendered examples.

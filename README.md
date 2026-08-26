@@ -202,6 +202,17 @@ With `npm link`, `gmux` tracks your working copy: re-run `npm run build` and the
 next `gmux` picks it up. To run straight from TypeScript without building, use
 `npm run dev -- ls`. To unlink later: `npm unlink -g @gigaflow/gmux`.
 
+`gmux attach` **fetch-if-missing** `gmuxd` from GitHub Releases, with the
+checksum pinned in the npm package. Supported triples:
+
+- `aarch64-apple-darwin`
+- `x86_64-apple-darwin`
+- `x86_64-unknown-linux-gnu`
+- `aarch64-unknown-linux-gnu`
+
+Binary shipping can follow attach once CI produces artifacts. Native attach
+stays experimental until captured peel extract fixtures exist.
+
 Requires Node 20+. Three optional companions, all surfaced by `gmux doctor`:
 
 - **ripgrep** (`brew install ripgrep`) — needed for `gmux grep`.
