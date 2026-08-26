@@ -308,7 +308,13 @@ pub async fn run(cwd: PathBuf) -> Result<(), TuiError> {
                 }
                 let (outcome, result) = snap.on_reply(&v);
                 if let Some(result) = result {
-                    apply_snapshot(&mut model, &mut funnel, &result, focused.as_deref());
+                    apply_snapshot(
+                        &mut model,
+                        &mut funnel,
+                        &mut mode,
+                        &result,
+                        focused.as_deref(),
+                    );
                     last_snap = Instant::now();
                     paint(
                         &mut terminal,
@@ -382,7 +388,7 @@ pub(crate) fn chrome_key(mode: Mode, funnel: &mut Funnel, km: keymap::Key) -> (M
                 next = Mode::Sidebar;
             }
         }
-        Action::StartPrompt(c) => funnel.push_pending(c),
+        Action::StartPrompt(c) => funnel.set_pending(c),
         _ => {}
     }
     (next, action)
@@ -474,7 +480,13 @@ async fn handle_mouse(
     Ok(())
 }
 
-fn apply_snapshot(model: &mut Model, funnel: &mut Funnel, snap: &Value, focused: Option<&str>) {
+fn apply_snapshot(
+    model: &mut Model,
+    funnel: &mut Funnel,
+    mode: &mut Mode,
+    snap: &Value,
+    focused: Option<&str>,
+) {
     let ws = model
         .workspace_id
         .clone()
@@ -483,6 +495,9 @@ fn apply_snapshot(model: &mut Model, funnel: &mut Funnel, snap: &Value, focused:
     *model = Model::from_snapshot(snap, ws.as_deref());
     model.focused_pane_id = focused_id.or_else(|| focused.map(str::to_string));
     funnel.sync_ids(model.panes.iter().map(|p| p.pane_id.clone()).collect());
+    if *mode == Mode::Drawer && funnel.drawer().is_none() {
+        *mode = Mode::Sidebar;
+    }
 }
 
 fn workspace_of(snap: &Value, focused: Option<&str>) -> Option<String> {
@@ -913,6 +928,19 @@ mod tests {
     }
 
     #[test]
+    fn start_prompt_replaces_pending_buffer() {
+        let mut funnel = Funnel::new(vec!["a"]);
+        let (mode, _) = chrome_key(Mode::Sidebar, &mut funnel, keymap::Key::Char('h'));
+        assert_eq!(mode, Mode::Prompt);
+        assert_eq!(funnel.pending_prompt(), "h");
+        let (mode, _) = chrome_key(mode, &mut funnel, keymap::Key::Esc);
+        assert_eq!(mode, Mode::Sidebar);
+        let (mode, _) = chrome_key(mode, &mut funnel, keymap::Key::Char('x'));
+        assert_eq!(mode, Mode::Prompt);
+        assert_eq!(funnel.pending_prompt(), "x");
+    }
+
+    #[test]
     fn snapshot_remap_keeps_funnel_client_local() {
         let snap = json!({
             "intel": { "up": true },
@@ -932,9 +960,37 @@ mod tests {
                 { "paneId": "p_c", "cwd": "/tmp/c", "state": "idle" },
             ],
         });
-        apply_snapshot(&mut model, &mut funnel, &snap2, None);
+        let mut mode = Mode::Drawer;
+        apply_snapshot(&mut model, &mut funnel, &mut mode, &snap2, None);
         assert_eq!(funnel.expanded(), Some(0));
         assert_eq!(funnel.drawer(), Some(0));
+        assert_eq!(mode, Mode::Drawer);
         assert_eq!(model.panes[0].pane_id, "p_b");
+    }
+
+    #[test]
+    fn snapshot_drop_selected_demotes_drawer_mode() {
+        let snap = json!({
+            "intel": { "up": true },
+            "panes": [
+                { "paneId": "p_a", "cwd": "/tmp/a", "state": "idle" },
+                { "paneId": "p_b", "cwd": "/tmp/b", "state": "idle" },
+            ],
+        });
+        let mut model = Model::from_snapshot(&snap, None);
+        let mut funnel = Funnel::new(model.panes.iter().map(|p| p.pane_id.clone()).collect());
+        funnel.select(0);
+        funnel.enter();
+        let mut mode = Mode::Drawer;
+        let snap2 = json!({
+            "intel": { "up": true },
+            "panes": [
+                { "paneId": "p_b", "cwd": "/tmp/b", "state": "idle" },
+            ],
+        });
+        apply_snapshot(&mut model, &mut funnel, &mut mode, &snap2, None);
+        assert!(funnel.expanded().is_none());
+        assert!(funnel.drawer().is_none());
+        assert_eq!(mode, Mode::Sidebar);
     }
 }

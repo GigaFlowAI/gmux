@@ -92,7 +92,9 @@ impl Funnel {
         &self.pending_prompt
     }
 
-    pub fn push_pending(&mut self, c: char) {
+    /// Seed the prompt buffer. Replaces, so a later StartPrompt is a new prompt.
+    pub fn set_pending(&mut self, c: char) {
+        self.pending_prompt.clear();
         self.pending_prompt.push(c);
     }
 
