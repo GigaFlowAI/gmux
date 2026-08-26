@@ -5,7 +5,7 @@
  */
 
 import type { PaneLink, SessionRecord, TmuxPane } from "../core/types.js";
-import type { PaneIdentity } from "../core/gmux-types.js";
+import type { PaneIdentity } from "../core/workspace-types.js";
 import { cachedRecords } from "./index-store.js";
 import { prunePaneLinks, readPaneLinks } from "./pane-links.js";
 import { resolvePanesLive } from "./tmux-resolve.js";

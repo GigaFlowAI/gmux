@@ -6,7 +6,7 @@
  * two things faked and nothing mocked:
  *
  * - **The model is a fake BINARY.** `node <script>` on `runProviderCommand`'s
- *   argv, via the `GMUX_SUMMARY_CMD` seam. No model, no network, no money,
+ *   argv, via the `GIGAMANAGE_SUMMARY_CMD` seam. No model, no network, no money,
  *   deterministic (non-negotiable #2) — and it is the only way to get honest
  *   coverage of the things that actually break here: chunk boundaries, a
  *   provider that exits non-zero, a kill racing a live answer.
@@ -66,7 +66,7 @@ async function fakeProvider(name: string, body: string): Promise<string> {
 const buffersThenDumps = 'process.stdin.resume();process.stdout.write("the build broke in a1b2c3d4");';
 const exitsNonZero = 'process.stderr.write("provider fell over");process.exit(3);';
 const echoesChildFlag =
-  'process.stdout.write("GMUX_CHILD=" + (process.env.GMUX_CHILD ?? "unset"));';
+  'process.stdout.write("GIGAMANAGE_CHILD=" + (process.env.GIGAMANAGE_CHILD ?? "unset"));';
 const splitsUtf8 =
   // "é" is two bytes; write them in separate stdout writes. Decoded across the
   // boundary this is `é`; concatenated with String(chunk) it is two `�`s.
@@ -77,16 +77,16 @@ beforeEach(async () => {
   home = await tempHome();
   cache = await tempHome();
   bin = await tempHome();
-  process.env.GMUX_HOME = home;
+  process.env.GIGAMANAGE_HOME = home;
   process.env.XDG_CACHE_HOME = cache;
   transcript = askTranscriptPath(newAskRunId());
   await mkdir(askTranscriptDir(), { recursive: true });
 });
 
 afterEach(async () => {
-  delete process.env.GMUX_HOME;
+  delete process.env.GIGAMANAGE_HOME;
   delete process.env.XDG_CACHE_HOME;
-  delete process.env.GMUX_SUMMARY_CMD;
+  delete process.env.GIGAMANAGE_SUMMARY_CMD;
   delete process.env.FZF_API_KEY;
   await rm(home, { recursive: true, force: true });
   await rm(cache, { recursive: true, force: true });
@@ -306,7 +306,7 @@ describe("streamAnswer", () => {
     const error = events.find((event) => event.t === "error");
     expect(error).toBeDefined();
     expect(error?.t === "error" && error.message).toContain("provider fell over");
-    expect(error?.t === "error" && error.message).toContain("gmux setup");
+    expect(error?.t === "error" && error.message).toContain("gm setup");
     expect(foldCompletedTurns(events)).toEqual([]);
   });
 
@@ -324,15 +324,15 @@ describe("streamAnswer", () => {
 });
 
 describe("the recursion guard", () => {
-  it("keeps GMUX_CHILD on the worker it forks", () => {
-    // The worker is a `gmux` that is about to make a model call — the definition
-    // of a child. Its provider may shell back into `gmux grep`, which must not
+  it("keeps GIGAMANAGE_CHILD on the worker it forks", () => {
+    // The worker is a `gm` that is about to make a model call — the definition
+    // of a child. Its provider may shell back into `gm grep`, which must not
     // start a summarize pass of its own.
     const options = askChildSpawnOptions({ PATH: "/usr/bin", FZF_API_KEY: "secret" });
     expect(options.detached).toBe(true);
     expect(options.stdio).toBe("ignore");
-    expect(options.env?.["GMUX_CHILD"]).toBe("1");
-    expect(options.env?.["GMUX_AUTO_SUMMARIZE"]).toBe("0");
+    expect(options.env?.["GIGAMANAGE_CHILD"]).toBe("1");
+    expect(options.env?.["GIGAMANAGE_AUTO_SUMMARIZE"]).toBe("0");
     // The key rides the environment and only the environment: argv is
     // world-readable (`ps -ww -o args=`), another uid's env is not.
     expect(options.env?.["FZF_API_KEY"]).toBe("secret");
@@ -342,18 +342,18 @@ describe("the recursion guard", () => {
     // The end of the chain, driven for real: the worker must not pass `env` to
     // `runProviderCommand`, or `childEnv()`'s marker is silently dropped and the
     // loop reopens. Nothing else in this file would notice.
-    process.env.GMUX_CHILD = "1";
-    process.env.GMUX_SUMMARY_CMD = await fakeProvider("echo-child", echoesChildFlag);
+    process.env.GIGAMANAGE_CHILD = "1";
+    process.env.GIGAMANAGE_SUMMARY_CMD = await fakeProvider("echo-child", echoesChildFlag);
     write([question(1, "who are you?")]);
     try {
       await runAskTurn({ transcript, seq: "1", notify: () => {} });
     } finally {
-      delete process.env.GMUX_CHILD;
+      delete process.env.GIGAMANAGE_CHILD;
     }
 
     const { events } = await readAskTranscript(transcript);
     expect(foldCompletedTurns(events)).toEqual([
-      { question: "who are you?", answer: "GMUX_CHILD=1" },
+      { question: "who are you?", answer: "GIGAMANAGE_CHILD=1" },
     ]);
   });
 
@@ -372,7 +372,7 @@ describe("the recursion guard", () => {
 
 describe("__ask-send", () => {
   it("appends meta and the question, then forks a worker that can already read it", async () => {
-    process.env.GMUX_SUMMARY_CMD = "claude -p --allowedTools Bash(gmux grep:*)";
+    process.env.GIGAMANAGE_SUMMARY_CMD = "claude -p --allowedTools Bash(gm grep:*)";
     let seenAtSpawn = "";
     let workerArgs: readonly string[] = [];
 
@@ -394,7 +394,7 @@ describe("__ask-send", () => {
     expect(workerArgs).toEqual([ASK_RUN_COMMAND, "--transcript", transcript, "--seq", "1"]);
 
     const { events } = await readAskTranscript(transcript);
-    expect(events[0]).toMatchObject({ t: "meta", provider: "claude -p --allowedTools Bash(gmux grep:*)" });
+    expect(events[0]).toMatchObject({ t: "meta", provider: "claude -p --allowedTools Bash(gm grep:*)" });
     expect(events[1]).toMatchObject({ t: "question", seq: 1, focus: "a1b2c3d4", text: "why did this one fail?" });
     // The lock names the worker, because esc has to kill its group.
     expect(await readAskLock(transcript)).toMatchObject({ pid: 4321 });
@@ -402,10 +402,10 @@ describe("__ask-send", () => {
 
   it("records the provider argv and never the environment", async () => {
     // `meta.provider` is what a human reads when the answers look wrong. It is
-    // also the argv that keeps gmux's own ask session a `-p` run — flagged
+    // also the argv that keeps gm's own ask session a `-p` run — flagged
     // automated, and so invisible in the picker that started it.
     process.env.FZF_API_KEY = "s3cret";
-    process.env.GMUX_SUMMARY_CMD = "claude -p";
+    process.env.GIGAMANAGE_SUMMARY_CMD = "claude -p";
     await sendAskQuestion({ transcript, question: "q", spawnWorker: () => 1 });
 
     const raw = await readFile(transcript, "utf8");
@@ -414,7 +414,7 @@ describe("__ask-send", () => {
   });
 
   it("writes meta exactly once across a thread", async () => {
-    process.env.GMUX_SUMMARY_CMD = "claude -p";
+    process.env.GIGAMANAGE_SUMMARY_CMD = "claude -p";
     await sendAskQuestion({ transcript, question: "first", spawnWorker: () => 1 });
     write([chunk(1, "a"), end(1)]);
     await releaseAskLock(transcript); // What the worker does when its turn ends.
@@ -429,7 +429,7 @@ describe("__ask-send", () => {
     // `transform` returns immediately, so nothing stops you pressing enter
     // twice. Two workers appending chunks of different seqs is the one thing
     // that makes the fold ambiguous.
-    process.env.GMUX_SUMMARY_CMD = "claude -p";
+    process.env.GIGAMANAGE_SUMMARY_CMD = "claude -p";
     await sendAskQuestion({ transcript, question: "first", spawnWorker: () => 1 });
     const before = await readFile(transcript, "utf8");
 
@@ -462,7 +462,7 @@ describe("__ask-send", () => {
     expect(events.at(-1)).toMatchObject({ t: "error", seq: 1 });
     expect(events.at(-1)?.t === "error" && events.at(-1)).toBeTruthy();
     const error = events.at(-1);
-    expect(error?.t === "error" && error.message).toContain("gmux setup");
+    expect(error?.t === "error" && error.message).toContain("gm setup");
     // The lock is released: the turn is over, and the next enter must work.
     expect(await readAskLock(transcript)).toBe(null);
   });
@@ -475,7 +475,7 @@ describe("__ask-send", () => {
 
 describe("__ask-run", () => {
   it("replays completed turns and answers the one it was given", async () => {
-    process.env.GMUX_SUMMARY_CMD = await fakeProvider("buffers2", buffersThenDumps);
+    process.env.GIGAMANAGE_SUMMARY_CMD = await fakeProvider("buffers2", buffersThenDumps);
     write([question(1, "first?"), chunk(1, "one"), end(1), question(2, "and this?")]);
 
     expect(await runAskTurn({ transcript, seq: "2", notify: () => {} })).toBe("answered");
@@ -489,7 +489,7 @@ describe("__ask-run", () => {
   it("drops the lock and writes nothing when its question is already settled", async () => {
     // A stale respawn must not answer twice, and must not leave the next enter
     // locked out by a ghost.
-    process.env.GMUX_SUMMARY_CMD = await fakeProvider("unused", buffersThenDumps);
+    process.env.GIGAMANAGE_SUMMARY_CMD = await fakeProvider("unused", buffersThenDumps);
     write([question(1, "q"), chunk(1, "a"), end(1)]);
     await writeFile(askLockPath(transcript), JSON.stringify({ pid: 0, startedAt: new Date().toISOString() }));
 
@@ -498,7 +498,7 @@ describe("__ask-run", () => {
   });
 
   it("releases the lock when the answer lands", async () => {
-    process.env.GMUX_SUMMARY_CMD = await fakeProvider("buffers3", buffersThenDumps);
+    process.env.GIGAMANAGE_SUMMARY_CMD = await fakeProvider("buffers3", buffersThenDumps);
     write([question(1, "q")]);
     await writeFile(askLockPath(transcript), JSON.stringify({ pid: 0, startedAt: new Date().toISOString() }));
 

@@ -1,5 +1,5 @@
 /**
- * Sensors: the two ways gmux learns what a pane is doing, unified behind one
+ * Sensors: the two ways gm learns what a pane is doing, unified behind one
  * shape.
  *
  * `TerminalSensor` watches a plain shell (or any harness we can't identify a
@@ -9,14 +9,14 @@
  * and cheaper than scraping a terminal, but only available once the pane is
  * linked to a session.
  *
- * Both report the same `Observation` shape (`gmux-types.ts`) so the daemon's
+ * Both report the same `Observation` shape (`gm-types.ts`) so the daemon's
  * state-derivation layer never needs to know which kind of pane it is looking
  * at.
  */
 
 import { createHash } from "node:crypto";
 
-import type { Observation, PaneIdentity } from "../core/gmux-types.js";
+import type { Observation, PaneIdentity } from "../core/workspace-types.js";
 import { paneLogPath } from "../core/paths.js";
 import { readJsonl, RingBuffer } from "../adapters/jsonl.js";
 import { cachedRecords } from "./index-store.js";
@@ -79,7 +79,7 @@ export class TerminalSensor implements Sensor {
 
 // --- Agent-signal derivation -----------------------------------------------
 //
-// These read the two shapes gmux already knows how to parse in full
+// These read the two shapes gm already knows how to parse in full
 // (`adapters/claude-code.ts`, `adapters/codex.ts`), but here we only ever see
 // the last ~40 rows of a possibly-still-growing file, so each helper looks
 // for one narrow, well-grounded marker rather than replaying the adapter's

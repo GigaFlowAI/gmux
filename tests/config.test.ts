@@ -40,11 +40,11 @@ let configHome: string;
 beforeEach(async () => {
   configHome = await tempHome();
   process.env.XDG_CONFIG_HOME = configHome;
-  delete process.env.GMUX_SUMMARY_CMD;
+  delete process.env.GIGAMANAGE_SUMMARY_CMD;
 });
 
 afterEach(async () => {
-  delete process.env.GMUX_SUMMARY_CMD;
+  delete process.env.GIGAMANAGE_SUMMARY_CMD;
   await rm(configHome, { recursive: true, force: true });
 });
 
@@ -62,16 +62,16 @@ function config(overrides: Partial<GmConfig> = {}): GmConfig {
 
 describe("provider catalog", () => {
   it("gives ask a grep grant that summarize does not have", () => {
-    // The whole reason askArgv exists. If these ever match, `gmux ask` has quietly
+    // The whole reason askArgv exists. If these ever match, `gm ask` has quietly
     // lost the ability to look past the summaries.
-    expect(claude.askArgv.join(" ")).toContain("gmux grep");
-    expect(claude.summaryArgv.join(" ")).not.toContain("gmux grep");
+    expect(claude.askArgv.join(" ")).toContain("gm grep");
+    expect(claude.summaryArgv.join(" ")).not.toContain("gm grep");
   });
 
-  it("scopes the ask grant to gmux grep rather than all of Bash", () => {
+  it("scopes the ask grant to gm grep rather than all of Bash", () => {
     // A blanket Bash grant would hand a session summarizer the whole machine.
     const grant = claude.askArgv[claude.askArgv.indexOf("--allowedTools") + 1];
-    expect(grant).toBe("Bash(gmux grep:*)");
+    expect(grant).toBe("Bash(gm grep:*)");
   });
 
   it("uses the catalog's ask argv for a known provider", () => {
@@ -196,7 +196,7 @@ describe("readConfig / writeConfig", () => {
   });
 
   it("survives a corrupt config instead of throwing", async () => {
-    // A truncated JSON file must not be able to kill `gmux ls`.
+    // A truncated JSON file must not be able to kill `gm ls`.
     await mkdir(dirname(configPath()), { recursive: true });
     await writeFile(configPath(), "{ half-writ", "utf8");
     expect(await readConfig()).toBeNull();
@@ -216,12 +216,12 @@ describe("resolveSummaryCommand", () => {
   it("puts the env var above everything", () => {
     // Every script, test and CI job that set this predates config and must keep
     // working without being told a new file exists.
-    const env = { GMUX_SUMMARY_CMD: "gemini -p" };
+    const env = { GIGAMANAGE_SUMMARY_CMD: "gemini -p" };
     expect(resolveSummaryCommand(config(), env, claude)).toEqual(["gemini", "-p"]);
   });
 
   it("lets the env var override even a configured 'no model calls'", () => {
-    const env = { GMUX_SUMMARY_CMD: "gemini -p" };
+    const env = { GIGAMANAGE_SUMMARY_CMD: "gemini -p" };
     expect(resolveSummaryCommand(config({ provider: null }), env, null)).toEqual(["gemini", "-p"]);
   });
 
@@ -232,7 +232,7 @@ describe("resolveSummaryCommand", () => {
   });
 
   it("re-derives a known provider's argv from the catalog, not the stored command", () => {
-    // The regression this fix exists for. A config written by an older gmux froze
+    // The regression this fix exists for. A config written by an older gm froze
     // codex as `["codex","exec"]`; the catalog later gained --skip-git-repo-check.
     // resolveAskCommand already self-heals via askArgvFor; summary must too, or
     // every codex call fails with "not inside a trusted directory".
@@ -261,7 +261,7 @@ describe("resolveSummaryCommand", () => {
   });
 
   it("ignores an empty env var rather than spawning nothing", () => {
-    expect(resolveSummaryCommand(null, { GMUX_SUMMARY_CMD: "   " }, claude)).toEqual(
+    expect(resolveSummaryCommand(null, { GIGAMANAGE_SUMMARY_CMD: "   " }, claude)).toEqual(
       claude.summaryArgv,
     );
   });
@@ -332,7 +332,7 @@ describe("shouldRunSetupWizard", () => {
   });
 
   it("never runs without a TTY", () => {
-    // `gmux ls | head` must not block on a prompt nobody can see.
+    // `gm ls | head` must not block on a prompt nobody can see.
     expect(gate({ isTty: false })).toBe(false);
   });
 

@@ -1,5 +1,5 @@
 /**
- * The work report: the wide-angle bottom of gmux's attention funnel. A pure
+ * The work report: the wide-angle bottom of gm's attention funnel. A pure
  * assembly of per-session cards into one self-contained HTML page — no external
  * references of any kind. Each model-generated fragment is UNTRUSTED and is
  * embedded via a sandboxed <iframe srcdoc>, which is the trust boundary: bad
@@ -53,7 +53,7 @@ function card(c: WorkReportCard): string {
 
 export function renderWorkReportHtml(cards: readonly WorkReportCard[], now: number): string {
   const when = new Date(now).toISOString();
-  const title = `gmux work report · ${cards.length} session${cards.length === 1 ? "" : "s"} · ${when}`;
+  const title = `gm work report · ${cards.length} session${cards.length === 1 ? "" : "s"} · ${when}`;
   const main = cards.length === 0
     ? `<main><p class="note">No sessions to report.</p></main>`
     : `<main>${cards.map(card).join("")}</main>`;
@@ -61,7 +61,7 @@ export function renderWorkReportHtml(cards: readonly WorkReportCard[], now: numb
     `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
     `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
-    `<title>gmux work report</title><style>${STYLE}</style></head>` +
+    `<title>gm work report</title><style>${STYLE}</style></head>` +
     `<body><header>${esc(title)}</header>${main}</body></html>`
   );
 }

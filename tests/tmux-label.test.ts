@@ -62,10 +62,10 @@ describe("paneLabel", () => {
 
   it("shows a loading message while a refresh is in flight", () => {
     expect(paneLabel(view("gigarepo", "old headline"), true)).toBe(
-      "gigarepo — gmux summaries loading…",
+      "gigarepo — gm summaries loading…",
     );
     // Loading takes precedence even before a first summary exists.
-    expect(paneLabel(view("gigarepo", null), true)).toBe("gigarepo — gmux summaries loading…");
+    expect(paneLabel(view("gigarepo", null), true)).toBe("gigarepo — gm summaries loading…");
   });
 
   it("does not truncate — tmux clips to the pane width at render", () => {

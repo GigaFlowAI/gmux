@@ -1,11 +1,11 @@
 /**
- * `gmux __ask-run` — the detached worker that answers one question.
+ * `gm __ask-run` — the detached worker that answers one question.
  *
  * It is spawned by `__ask-send`, holds the lock its sender took, writes into the
  * transcript and exits. Its stdio is `ignore`d and fzf owns the terminal, so it
  * says nothing to anyone: the transcript is its only output, errors included.
  *
- * **It rebuilds the conversation from the file.** `gmux ask`'s REPL kept its turns
+ * **It rebuilds the conversation from the file.** `gm ask`'s REPL kept its turns
  * in a closure; a fan of one-shot workers has no closure to keep them in. That
  * difference is the whole design, and none of it reaches `buildAskPrompt`, which
  * still takes a plain `AskTurn[]`.
@@ -94,7 +94,7 @@ export async function runAskTurn(options: AskRunOptions): Promise<AskRunStatus> 
 
   try {
     if (!argv) {
-      const failed = new NoProviderError("`gmux ask`");
+      const failed = new NoProviderError("`gm ask`");
       appendAskEvent(fd, {
         t: "error",
         seq,
@@ -113,7 +113,7 @@ export async function runAskTurn(options: AskRunOptions): Promise<AskRunStatus> 
     const turns = foldCompletedTurns(events);
 
     await streamAnswer({
-      // The provider argv is exactly what bare `gmux ask` uses, `-p` and all —
+      // The provider argv is exactly what bare `gm ask` uses, `-p` and all —
       // which is what keeps this call's own session flagged automated, and so
       // out of the picker that started it.
       argv,
@@ -141,7 +141,7 @@ export async function runAskTurn(options: AskRunOptions): Promise<AskRunStatus> 
 export function registerAskRun(program: Command): void {
   program
     .command(ASK_RUN_COMMAND, { hidden: true })
-    .description("internal: answer one question into a transcript (run detached by gmux itself)")
+    .description("internal: answer one question into a transcript (run detached by gm itself)")
     .requiredOption("--transcript <path>", "the picker's chat transcript")
     .requiredOption("--seq <n>", "which question to answer")
     .option("--port <port>", "fzf's listen port, for the repaint")

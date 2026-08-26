@@ -1,5 +1,5 @@
 import { hammingDistance, simhash64 } from "../core/fingerprint.js";
-import type { Observation } from "../core/gmux-types.js";
+import type { Observation } from "../core/workspace-types.js";
 
 interface Last { fingerprint: string; ts: number; }
 

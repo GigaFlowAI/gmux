@@ -102,7 +102,7 @@ describe("buildAskContext", () => {
   });
 
   it("resolves a focus id given as a short prefix", () => {
-    // The picker passes fzf's field, and gmux ids are shown truncated.
+    // The picker passes fzf's field, and gm ids are shown truncated.
     const context = buildAskContext([view()], "aaaa1111");
     expect(context.focusId).toBe("aaaa1111-0000-0000-0000-000000000000");
   });
@@ -148,8 +148,8 @@ describe("buildAskPrompt", () => {
     expect(prompt([view()])).toMatch(/title.*stale/is);
   });
 
-  it("offers gmux grep as the way past the summaries", () => {
-    expect(prompt([view()])).toContain("gmux grep");
+  it("offers gm grep as the way past the summaries", () => {
+    expect(prompt([view()])).toContain("gm grep");
   });
 
   it("marks a session that ended mid-task", () => {
@@ -228,7 +228,7 @@ describe("thinContextNotice", () => {
 /**
  * The filters ctrl-o carries.
  *
- * `gmux ask` builds its own window. Left to its defaults that is the 20 most
+ * `gm ask` builds its own window. Left to its defaults that is the 20 most
  * recent sessions across every project — which, for a filtered pick or any row
  * past the 20th, does not contain the session being highlighted. `--focus` then
  * matches nothing, resolves to null, and the chat answers about a list the user
@@ -244,7 +244,7 @@ describe("pickerAskArgs", () => {
   });
 
   it("forwards the limit, so ask reasons over the list you are looking at", () => {
-    // gmux pick offers 50 by default; ask defaults to 20. Without this, ctrl-o on
+    // gm pick offers 50 by default; ask defaults to 20. Without this, ctrl-o on
     // anything past the 20th row loses its focus silently.
     expect(pickerAskArgs({ limit: "50" }).join(" ")).toContain("-n 50");
   });
@@ -277,14 +277,14 @@ describe("pickerAskArgs", () => {
   });
 
   /**
-   * Every option forwarded must be one `gmux ask` declares.
+   * Every option forwarded must be one `gm ask` declares.
    *
    * Commander rejects an option it does not know, so a flag the picker forwards
    * and ask has never heard of makes ctrl-o die on "unknown option" — for the
    * exact picker modes that forwarded it, and only those. This pins the contract
    * between the two rather than trusting them to stay in step.
    */
-  it("forwards only options gmux ask actually declares", () => {
+  it("forwards only options gm ask actually declares", () => {
     const program = new Command();
     registerAsk(program);
     const ask = program.commands.find((c) => c.name() === "ask")!;
@@ -322,14 +322,14 @@ describe("the picker's ask binding", () => {
     multiline: true,
     preview: "preview",
     reloadCmd: "reload",
-    askCmd: "gmux ask --focus {1}",
+    askCmd: "gm ask --focus {1}",
     tier: "execute",
     ...overrides,
   });
 
   it("binds ctrl-o and advertises it", () => {
     const args = fzfArgs(spec());
-    expect(args).toContain("--bind=ctrl-o:execute(gmux ask --focus {1})");
+    expect(args).toContain("--bind=ctrl-o:execute(gm ask --focus {1})");
     expect(args.join(" ")).toContain("ctrl-o: ask");
   });
 

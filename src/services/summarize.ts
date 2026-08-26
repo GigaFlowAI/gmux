@@ -2,8 +2,8 @@
  * Summaries: the layer that answers "where did this land, and what's next?".
  *
  * The provider is a plain CLI invoked with the distilled prompt on stdin. That
- * keeps gmux harness-agnostic — it ships pointing at `claude -p`, but
- * GMUX_SUMMARY_CMD can point it at `codex exec` or anything else that
+ * keeps gm harness-agnostic — it ships pointing at `claude -p`, but
+ * GIGAMANAGE_SUMMARY_CMD can point it at `codex exec` or anything else that
  * reads a prompt and writes text.
  *
  * Summaries are cached by content hash and regenerated only when the session
@@ -36,17 +36,17 @@ import { onPath } from "./providers.js";
  * Each is an independent `claude -p`; they do not contend. Eight keeps a
  * twenty-session backfill down to a few wall-clock minutes instead of twenty.
  */
-const SUMMARY_CONCURRENCY = Number(process.env["GMUX_SUMMARY_CONCURRENCY"]) || 8;
+const SUMMARY_CONCURRENCY = Number(process.env["GIGAMANAGE_SUMMARY_CONCURRENCY"]) || 8;
 const PROVIDER_TIMEOUT_MS = 120_000;
 
 /**
  * Default provider command, ignoring config.
  *
  * Kept for the synchronous callers that predate config and for tests. Prefer
- * `defaultSummaryProvider()`, which honors what the user chose in `gmux setup`.
+ * `defaultSummaryProvider()`, which honors what the user chose in `gm setup`.
  */
 export function defaultProviderCommand(): string[] {
-  const override = process.env.GMUX_SUMMARY_CMD;
+  const override = process.env.GIGAMANAGE_SUMMARY_CMD;
   if (override && override.trim() !== "") return override.trim().split(/\s+/);
   return [...FALLBACK_COMMAND];
 }
@@ -82,7 +82,7 @@ export class CliSummaryProvider implements SummaryProvider {
 
 /**
  * The summary provider for the current config, or null when the user has
- * configured gmux to make no model calls.
+ * configured gm to make no model calls.
  *
  * Null is a choice being honored, not a failure. Callers render it as such.
  */
@@ -147,11 +147,11 @@ export function isStale(summary: SessionSummary | null, record: SessionRecord): 
 
 /**
  * How many of the 64 SimHash bits must differ before a session is worth
- * re-summarising. Tunable via `GMUX_REFRESH_DISTANCE`; the default is
+ * re-summarising. Tunable via `GIGAMANAGE_REFRESH_DISTANCE`; the default is
  * conservative — refresh on real progress, not on chatter.
  */
 export const REFRESH_DISTANCE = (() => {
-  const raw = Number(process.env.GMUX_REFRESH_DISTANCE);
+  const raw = Number(process.env.GIGAMANAGE_REFRESH_DISTANCE);
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 8;
 })();
 

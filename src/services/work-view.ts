@@ -113,7 +113,7 @@ export function buildWorkViewPrompt(input: SummaryInput): string {
 }
 
 const PROVIDER_TIMEOUT_MS = 120_000;
-const WORKVIEW_CONCURRENCY = Number(process.env["GMUX_WORKVIEW_CONCURRENCY"]) || 8;
+const WORKVIEW_CONCURRENCY = Number(process.env["GIGAMANAGE_WORKVIEW_CONCURRENCY"]) || 8;
 
 /** A prompt goes in, an HTML fragment (unvalidated) comes out. */
 export interface WorkViewProvider {
@@ -122,7 +122,7 @@ export interface WorkViewProvider {
   render(prompt: string): Promise<string>;
 }
 
-/** The default: the same CLI the summarizer uses (`claude -p` / GMUX_SUMMARY_CMD). */
+/** The default: the same CLI the summarizer uses (`claude -p` / GIGAMANAGE_SUMMARY_CMD). */
 export class CliWorkViewProvider implements WorkViewProvider {
   readonly name: string;
   private readonly argv: string[];

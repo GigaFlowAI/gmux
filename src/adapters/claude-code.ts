@@ -51,7 +51,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
    * and can nest again inside each other. Those are the sidechains: on this
    * author's machine they outnumber real sessions roughly nine to one, which is
    * exactly why they are hidden by default — and why they must still be found,
-   * so `--include-sidechains` and `gmux grep` can reach them.
+   * so `--include-sidechains` and `gm grep` can reach them.
    */
   async listSessions(): Promise<SessionRef[]> {
     const root = this.root();

@@ -8,7 +8,7 @@ import {
 import { defaultSummaryProvider } from "../../services/summarize.js";
 
 /**
- * The background worker, re-entered as `gmux __auto-summarize`.
+ * The background worker, re-entered as `gm __auto-summarize`.
  *
  * Hidden: it is not a thing a person runs. It exists so the foreground command
  * can hand the slow model calls to a detached copy of itself and exit.
@@ -20,7 +20,7 @@ import { defaultSummaryProvider } from "../../services/summarize.js";
 export function registerAutoSummarizeWorker(program: Command): void {
   program
     .command(AUTO_SUMMARIZE_COMMAND, { hidden: true })
-    .description("internal: write summaries for recent sessions (run detached by gmux itself)")
+    .description("internal: write summaries for recent sessions (run detached by gm itself)")
     .action(async () => {
       // A null provider means the user configured "no model calls". Same
       // outcome as a missing binary: drop the lock and do nothing.

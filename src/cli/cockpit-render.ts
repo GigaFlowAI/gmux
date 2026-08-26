@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import { formatBytes } from "../core/bytes.js";
-import type { HostPressure, PaneEntry, WorkspaceSnapshot } from "../core/gmux-types.js";
+import type { HostPressure, PaneEntry, WorkspaceSnapshot } from "../core/workspace-types.js";
 import { stateGlyph } from "./tmux-label.js";
 
 export { formatBytes };
@@ -56,7 +56,7 @@ export function renderCockpit(
   if (status) lines.push(status);
   for (const g of snapshot.guardianLog.slice(-3)) lines.push(`⚠ ${g.message}`);
   if (snapshot.guardianLog.length > 0) lines.push("");
-  lines.push(`gmux — ${snapshot.panes.length} panes`);
+  lines.push(`gm — ${snapshot.panes.length} panes`);
 
   // Sort panes by memory descending if any have resources
   const hasResources = snapshot.panes.some((p) => p.resources);

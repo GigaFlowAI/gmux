@@ -1,10 +1,10 @@
 import { connect } from "node:net";
 import { readFile, stat } from "node:fs/promises";
-import type { WorkspaceSnapshot } from "../core/gmux-types.js";
-import { gmuxSnapshotPath, gmuxSocketPath } from "../core/paths.js";
+import type { WorkspaceSnapshot } from "../core/workspace-types.js";
+import { daemonSnapshotPath, daemonSocketPath } from "../core/paths.js";
 
 export async function readSnapshotFile(
-  path: string = gmuxSnapshotPath(),
+  path: string = daemonSnapshotPath(),
 ): Promise<{ snapshot: WorkspaceSnapshot; ageMs: number } | null> {
   try {
     const [raw, st] = await Promise.all([readFile(path, "utf8"), stat(path)]);
@@ -19,7 +19,7 @@ export function subscribe(
   onSnapshot: (s: WorkspaceSnapshot) => void,
   opts: { socketPath?: string; onError?: (e: Error) => void } = {},
 ): () => void {
-  const sock = connect(opts.socketPath ?? gmuxSocketPath());
+  const sock = connect(opts.socketPath ?? daemonSocketPath());
   let buf = "";
   sock.on("data", (d) => {
     buf += d.toString();

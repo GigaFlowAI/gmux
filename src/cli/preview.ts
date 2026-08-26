@@ -1,7 +1,7 @@
 /**
  * The preview pane — both halves of it.
  *
- * fzf has exactly ONE preview pane and cannot split it. So gmux renders the card
+ * fzf has exactly ONE preview pane and cannot split it. So gm renders the card
  * and the chat into one command's output and owns the boundary itself: fzf does
  * not gain a pane, it gains a longer string.
  *
@@ -12,7 +12,7 @@
  * │   docs     1d  │ ── ask ────────────────────│  ← the divider
  * │                │ you                        │
  * │                │   why did this one fail?   │  ← the transcript
- * │                │ gmux                         │
+ * │                │ gm                         │
  * │                │   The run died in apply_…  │
  * └────────────────┴────────────────────────────┘
  * ```
@@ -30,7 +30,7 @@
  *
  * **Colour is an accent, never the message.** The preview's stdout is a pipe,
  * not a tty, so `format.ts`'s gated `dim`/`cyan` are no-ops here and the CARD
- * stays monochrome, exactly as it shipped. The divider and the `you`/`gmux`
+ * stays monochrome, exactly as it shipped. The divider and the `you`/`gm`
  * speakers use the `paneCyan`/`paneBold` variants instead, which fzf renders
  * with `--ansi` — so the seam between card and chat pops in colour. But the
  * divider is still carried by GLYPHS and the speakers by LAYOUT, so `NO_COLOR`,
@@ -105,7 +105,7 @@ export function splitPreview(paneRows: number, hasChat: boolean): PreviewSplit {
  *
  * Labelled because `format.ts`'s idiom is named sections (`WHERE IT LANDED`,
  * `NEXT STEP`) and an anonymous rule would be the only unnamed boundary on
- * screen. `paneCyan` — gmux's own accent, the `gmux` speaker's colour — so the seam
+ * screen. `paneCyan` — gm's own accent, the `gm` speaker's colour — so the seam
  * between the monochrome card and the chat is the one line that pops, which is
  * the whole reason it is coloured rather than dim. `paneCyan` not `cyan`: the
  * pane is a pipe, so the gated `cyan` is a no-op here; `paneCyan` drops only the
@@ -216,12 +216,12 @@ function answerText(seq: number, question: Question, folded: ReturnType<typeof f
 }
 
 /**
- * `you` / `gmux`, with the body indented under it.
+ * `you` / `gm`, with the body indented under it.
  *
  * Legible with colour off, which the pane requires: the speaker sits on its own
  * line above an indented body, so the LAYOUT distinguishes them and the colour
  * only accelerates it. `paneBold` is the section-heading idiom; `paneCyan` is
- * already gmux's own colour (the `where` column, the `○` marker) — the forced
+ * already gm's own colour (the `where` column, the `○` marker) — the forced
  * variants, because the pane is a pipe and the gated ones would be no-ops here.
  */
 function speaker(head: string, body: string, width: number): string[] {
@@ -273,7 +273,7 @@ export function formatChat(
     if (index > 0) lines.push("");
     lines.push(...speaker(questionHead(question, previousFocus, index === 0), question.text, width));
     lines.push("");
-    lines.push(...speaker(paneCyan("gmux"), answerText(question.seq, question, folded, now), width));
+    lines.push(...speaker(paneCyan("gm"), answerText(question.seq, question, folded, now), width));
     previousFocus = question.focus;
   }
 
@@ -293,7 +293,7 @@ export function formatChat(
  * The card is clipped and not rewritten: measured, it renders 23–83 rows against
  * a 14–41 row pane, so it already overflows the FULL pane by 1.2x–6x at every
  * realistic size. The split does not break the card; the card was already
- * clipped, and fixing that is `gmux show`'s bug, not this pane's.
+ * clipped, and fixing that is `gm show`'s bug, not this pane's.
  */
 function clipToRows(lines: readonly string[], rows: number, width: number): string[] {
   const out: string[] = [];

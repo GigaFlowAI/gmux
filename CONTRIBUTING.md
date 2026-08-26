@@ -1,6 +1,6 @@
-# Contributing to gmux
+# Contributing to gm
 
-Contributions are welcome — especially **adapters for other harnesses**. If you use an agent gmux doesn't read yet, that's the highest-value thing you can add, and it's one file.
+Contributions are welcome — especially **adapters for other harnesses**. If you use an agent gm doesn't read yet, that's the highest-value thing you can add, and it's one file.
 
 ## Setup
 
@@ -15,7 +15,7 @@ Node 20 or newer. No other services, no API keys: the test suite never calls a m
 
 ## The one rule that matters
 
-gmux has a strict, one-way dependency order:
+gm has a strict, one-way dependency order:
 
 ```
 core  ←  adapters  ←  services  ←  cli
@@ -43,16 +43,16 @@ We test against **real session files** written to a temp directory, not mocks of
 Two hard rules:
 
 1. **No test may call a real model.** Summary providers are injected; use a fake. A test suite that costs money is a test suite people stop running.
-2. **No test may read the developer's real `~/.claude` or `~/.codex`.** Point `GMUX_HOME` at a temp directory (the existing tests show how).
+2. **No test may read the developer's real `~/.claude` or `~/.codex`.** Point `GIGAMANAGE_HOME` at a temp directory (the existing tests show how).
 
 ## Principles
 
-gmux tries to follow a few ideas from [harness engineering](https://openai.com/index/harness-engineering/) — the practice of building environments that both humans and agents can work in:
+gm tries to follow a few ideas from [harness engineering](https://openai.com/index/harness-engineering/) — the practice of building environments that both humans and agents can work in:
 
-- **If it can't be retrieved at runtime, it doesn't exist.** Every read command supports `--json`, on a versioned schema. gmux is a tool agents call, not just one people type. New commands ship with `--json` from day one.
-- **Errors carry their own fix.** Every `GmuxError` takes a `fix` string that names the exact command to run. If you add an error and can't articulate the fix, that's a signal the error is in the wrong place.
+- **If it can't be retrieved at runtime, it doesn't exist.** Every read command supports `--json`, on a versioned schema. gm is a tool agents call, not just one people type. New commands ship with `--json` from day one.
+- **Errors carry their own fix.** Every `GigamanageError` takes a `fix` string that names the exact command to run. If you add an error and can't articulate the fix, that's a signal the error is in the wrong place.
 - **Mechanical enforcement over convention.** See the layer rule above.
-- **Read-only, always.** gmux must never write to a session file. It owns its cache and nothing else. A PR that writes into `~/.claude` or `~/.codex` will be rejected regardless of how useful it is.
+- **Read-only, always.** gm must never write to a session file. It owns its cache and nothing else. A PR that writes into `~/.claude` or `~/.codex` will be rejected regardless of how useful it is.
 
 ## Releasing (maintainers)
 
@@ -77,8 +77,8 @@ The trust config is bound to the workflow **filename**. If you rename
 `release.yml`, publishing breaks until you re-point it:
 
 ```bash
-npm trust github gmux --file <new-name>.yml \
-  --repo GigaFlowAI/gmux --allow-publish
+npm trust github gm --file <new-name>.yml \
+  --repo GigaFlowAI/gigamanage --allow-publish
 ```
 
 One wrinkle, since it is a real npm limitation rather than an oversight here:
@@ -91,4 +91,4 @@ with a credential and every release after it is tokenless.
 - Run `npm run check` first.
 - One concern per PR.
 - If you change what a `SessionRecord` contains, bump `INDEX_VERSION` in `src/services/index-store.ts` so stale caches are discarded rather than silently misread.
-- Describe the behavior you observed, not just the code you wrote. "Ran `gmux ls` against 1,100 real sessions, cold index 1.2s" is worth more than a paragraph of description.
+- Describe the behavior you observed, not just the code you wrote. "Ran `gm ls` against 1,100 real sessions, cold index 1.2s" is worth more than a paragraph of description.

@@ -3,14 +3,14 @@
  * (one-line label + card) and writes it to the workspace model.
  *
  * THE DECOUPLING INVARIANT. An LLM call can hang, time out, or simply be slow
- * — and gmux's fast path (sensors, gate, state transitions, the socket) must
+ * — and gm's fast path (sensors, gate, state transitions, the socket) must
  * never notice. `SemanticWorker` is a bounded concurrent pool keyed by pane:
  * `enqueue` never awaits the provider, coalesces a pane's pending job (newest
  * observation wins), and lets `concurrency` jobs run side by side. One pane
  * hanging never keeps another pane's label from landing.
  */
 
-import type { Observation, PaneEntry, PaneSemantics } from "../core/gmux-types.js";
+import type { Observation, PaneEntry, PaneSemantics } from "../core/workspace-types.js";
 import { simhash64 } from "../core/fingerprint.js";
 import { readConfig, resolveSummaryCommand } from "./config.js";
 import { runProviderCommand } from "./provider-process.js";
@@ -69,7 +69,7 @@ export function parseLabelFields(raw: string): { label: string; card: string } {
 
 /**
  * The real `LabelProvider`: a thin wrapper over a provider CLI (the same
- * argv `gmux`'s session summaries use), with its own compact prompt.
+ * argv `gm`'s session summaries use), with its own compact prompt.
  *
  * Deliberately NOT built on `SummaryProvider`/`SummaryInput` — that shape
  * carries a whole session's prompt history, git branch, files touched, and a
@@ -81,7 +81,7 @@ export function parseLabelFields(raw: string): { label: string; card: string } {
  * so the two features keep sharing one provider *choice* even though they
  * don't share a prompt shape.
  *
- * `argv: null` means "no provider configured" (`gmux setup` never ran, or the
+ * `argv: null` means "no provider configured" (`gm setup` never ran, or the
  * user chose to make no model calls) — `label()` throws in that case, which
  * `SemanticWorker`'s try/catch turns into a silent skip rather than a crash.
  */
@@ -96,7 +96,7 @@ export class CliLabelProvider implements LabelProvider {
   }
 }
 
-/** The `CliLabelProvider` for the user's current config (`gmux setup`). */
+/** The `CliLabelProvider` for the user's current config (`gm setup`). */
 export async function defaultLabelProvider(): Promise<CliLabelProvider> {
   const config = await readConfig();
   return new CliLabelProvider(resolveSummaryCommand(config));

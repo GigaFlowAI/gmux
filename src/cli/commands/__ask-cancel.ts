@@ -1,5 +1,5 @@
 /**
- * `gmux __ask-cancel` — what esc does mid-answer.
+ * `gm __ask-cancel` — what esc does mid-answer.
  *
  * **It kills the process GROUP, and that is the whole point of this command.**
  * Measured, and it is where the prototype actually broke: `kill -TERM <worker>`

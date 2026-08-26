@@ -95,7 +95,7 @@ describe("process snapshot", () => {
   // `ps -eo pid=,ppid=,etime=,command=` — etime is `[[DD-]HH:]MM:SS`, no spaces.
   const OUTPUT = [
     "  100     1    01:00:00 -zsh",
-    "  200   100       05:00 node /Users/me/.local/bin/gmux run codex",
+    "  200   100       05:00 node /Users/me/.local/bin/gm run codex",
     "  300   200       04:30 node /Users/me/.local/bin/codex resume 019fee8d-51a2-7f60-9cff-e7f9db4b100e",
     "  400   300       00:10 node ./mcp/server.mjs",
     "  999     1 04-07:41:28 some other process",

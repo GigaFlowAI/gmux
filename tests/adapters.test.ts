@@ -12,11 +12,11 @@ const CODEX_ID = "019e9a77-740f-7903-942c-caab943b6101";
 
 beforeEach(async () => {
   home = await tempHome();
-  process.env.GMUX_HOME = home;
+  process.env.GIGAMANAGE_HOME = home;
 });
 
 afterEach(async () => {
-  delete process.env.GMUX_HOME;
+  delete process.env.GIGAMANAGE_HOME;
   await rm(home, { recursive: true, force: true });
 });
 

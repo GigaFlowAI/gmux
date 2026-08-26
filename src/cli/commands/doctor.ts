@@ -34,7 +34,7 @@ interface Check {
 export function registerDoctor(program: Command): void {
   program
     .command("doctor")
-    .description("check what gmux can see, and what's missing")
+    .description("check what gm can see, and what's missing")
     .option("--json", "emit JSON for scripts and agents")
     .action(async (options: { json?: boolean }) => {
       const checks: Check[] = [];
@@ -55,7 +55,7 @@ export function registerDoctor(program: Command): void {
       checks.push({
         name: "ripgrep (search)",
         ok: rg,
-        detail: rg ? "on PATH" : "missing — `gmux grep` will not work",
+        detail: rg ? "on PATH" : "missing — `gm grep` will not work",
         ...(rg ? {} : { fix: "brew install ripgrep" }),
       });
 
@@ -78,10 +78,10 @@ export function registerDoctor(program: Command): void {
           ? tmuxOk
             ? `${tmuxV.raw} — \`ctrl+g\` overlay available`
             : `${tmuxV.raw} — too old; the overlay needs tmux >= 3.2`
-          : "not found — the tmux overlay (`gmux tmux install`) is unavailable",
+          : "not found — the tmux overlay (`gm tmux install`) is unavailable",
         ...(tmuxOk
           ? {}
-          : { fix: tmuxV ? "Upgrade tmux to 3.2 or newer." : "brew install tmux, then `gmux tmux install`." }),
+          : { fix: tmuxV ? "Upgrade tmux to 3.2 or newer." : "brew install tmux, then `gm tmux install`." }),
       });
 
       const bindings = inspectTmuxBindings(homedir(), realTmuxFs());
@@ -95,7 +95,7 @@ export function registerDoctor(program: Command): void {
           : bindings.leftoverLegacy
             ? `installed in ${bindings.targetPath} but shadowed by leftover gigamanage bindings`
             : `installed in ${bindings.targetPath}`,
-        ...(bindingsOk ? {} : { fix: "gmux tmux install  (or re-run `gmux setup`)" }),
+        ...(bindingsOk ? {} : { fix: "gm tmux install  (or re-run `gm setup`)" }),
       });
       if (bindings.leftoverLegacy) {
         checks.push({
@@ -103,7 +103,7 @@ export function registerDoctor(program: Command): void {
           ok: false,
           optional: true,
           detail: "old # >>> gigamanage >>> block still present — ctrl-g may open `gm overlay`",
-          fix: "gmux tmux install  (migrates the old block) or delete the # >>> gigamanage >>> block from ~/.tmux.conf / ~/.tmux.conf.local",
+          fix: "gm tmux install  (migrates the old block) or delete the # >>> gigamanage >>> block from ~/.tmux.conf / ~/.tmux.conf.local",
         });
       }
 
@@ -112,15 +112,15 @@ export function registerDoctor(program: Command): void {
       const hasConfigFile = await configExists();
       checks.push({
         name: "config",
-        // Absent config is fine — gmux autodetects. A file we couldn't parse is not.
+        // Absent config is fine — gm autodetects. A file we couldn't parse is not.
         ok: !hasConfigFile || config !== null,
         optional: true,
         detail: !hasConfigFile
-          ? "none yet — gmux autodetects a provider. `gmux setup` makes the choice explicit"
+          ? "none yet — gm autodetects a provider. `gm setup` makes the choice explicit"
           : config === null
             ? "unreadable — ignoring it and autodetecting instead"
             : `${configPath()}`,
-        ...(hasConfigFile && config === null ? { fix: "Run `gmux setup` to rewrite it." } : {}),
+        ...(hasConfigFile && config === null ? { fix: "Run `gm setup` to rewrite it." } : {}),
       });
 
       const provider = await defaultSummaryProvider();
@@ -133,8 +133,8 @@ export function registerDoctor(program: Command): void {
           ? "none — this machine is configured to make no model calls"
           : providerOk
             ? "on PATH"
-            : "missing — `gmux summarize` and `gmux ask` will not work",
-        ...(providerOk ? {} : { fix: "Run `gmux setup` to choose a provider." }),
+            : "missing — `gm summarize` and `gm ask` will not work",
+        ...(providerOk ? {} : { fix: "Run `gm setup` to choose a provider." }),
       });
 
       // Background model calls spend tokens, so make it visible that they happen
@@ -144,11 +144,11 @@ export function registerDoctor(program: Command): void {
       const nested = isChildProcess();
       const autoOn = envOn && configOn && !nested;
       const offReason = !envOn
-        ? "off (GMUX_AUTO_SUMMARIZE=0)"
+        ? "off (GIGAMANAGE_AUTO_SUMMARIZE=0)"
         : !configOn
-          ? "off (you declined it in `gmux setup`)"
+          ? "off (you declined it in `gm setup`)"
           : nested
-            ? "off (this gmux was spawned by gmux's own provider)"
+            ? "off (this gm was spawned by gm's own provider)"
             : "";
       checks.push({
         name: "auto-summarize (background)",
@@ -163,12 +163,12 @@ export function registerDoctor(program: Command): void {
           ? {}
           : {
               fix: !envOn
-                ? "Unset GMUX_AUTO_SUMMARIZE to let gmux keep recent sessions summarized."
+                ? "Unset GIGAMANAGE_AUTO_SUMMARIZE to let gm keep recent sessions summarized."
                 : !configOn
-                  ? "Run `gmux setup` to turn it back on."
+                  ? "Run `gm setup` to turn it back on."
                   : nested
-                    ? "Nothing to do — this is the guard that stops gmux summarizing its own summarizer."
-                    : "Run `gmux setup` to choose a provider, or `gmux --no-auto-summarize` to silence this.",
+                    ? "Nothing to do — this is the guard that stops gm summarizing its own summarizer."
+                    : "Run `gm setup` to choose a provider, or `gm --no-auto-summarize` to silence this.",
             }),
       });
 
@@ -190,7 +190,7 @@ export function registerDoctor(program: Command): void {
         name: "sessions visible",
         ok: total > 0,
         detail: `${total} total`,
-        ...(total > 0 ? {} : { fix: "Run an agent session first, or check GMUX_HOME." }),
+        ...(total > 0 ? {} : { fix: "Run an agent session first, or check GIGAMANAGE_HOME." }),
       });
 
       if (options.json) {

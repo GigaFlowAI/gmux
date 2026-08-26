@@ -1,5 +1,5 @@
 /**
- * `gmux organize`: the heuristic planner, the LLM planner's reply parsing +
+ * `gm organize`: the heuristic planner, the LLM planner's reply parsing +
  * defensive fallback, and `applyPlan`'s executor.
  *
  * No real tmux, no real LLM — non-negotiables #2 and #3. The "LLM" tests spawn

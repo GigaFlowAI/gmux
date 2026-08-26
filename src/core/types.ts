@@ -1,5 +1,5 @@
 /**
- * The shared vocabulary of gmux. Every layer speaks these types.
+ * The shared vocabulary of gm. Every layer speaks these types.
  *
  * `core` imports nothing internal — see docs/architecture.md for the layer rule.
  */
@@ -22,7 +22,7 @@ export interface SessionRef {
 }
 
 /**
- * One tmux pane as gmux sees it: geometry plus enough to resolve it to a
+ * One tmux pane as gm sees it: geometry plus enough to resolve it to a
  * session. `command` is `pane_current_command` (the foreground process, e.g.
  * "claude", "codex", "node", "zsh") — a weak signal, since a node-based harness
  * often shows as "node"; the cwd carries most of the resolution.
@@ -44,7 +44,7 @@ export interface TmuxPane {
 }
 
 /**
- * An exact pane→session link recorded by `gmux run`. Ephemeral runtime state: a
+ * An exact pane→session link recorded by `gm run`. Ephemeral runtime state: a
  * `paneId` means nothing once the tmux server dies, so this lives in the cache
  * and is pruned to the live pane set on every read of the overlay.
  */
@@ -110,7 +110,7 @@ export interface SessionRecord {
   /**
    * A non-interactive run (`claude -p`, `codex exec`) rather than a conversation
    * someone sat through. Hidden by default: these are automation, not work you
-   * would context-switch back into — and gmux's own summarizer creates
+   * would context-switch back into — and gm's own summarizer creates
    * them, so listing them would make the tool pollute its own output.
    */
   isAutomated: boolean;
@@ -203,10 +203,10 @@ export interface SummaryFields {
 }
 
 /**
- * A model CLI gmux may call.
+ * A model CLI gm may call.
  *
  * `command` is argv for a one-shot call: prompt on stdin, text on stdout. That
- * is the whole contract, and it is why gmux depends on no vendor SDK.
+ * is the whole contract, and it is why gm depends on no vendor SDK.
  */
 export interface ProviderChoice {
   /** Catalog id ("claude-code", "codex"), or "custom" for a hand-written command. */
@@ -220,7 +220,7 @@ export const CONFIG_VERSION = 1;
 /**
  * The choices a human made, persisted.
  *
- * Config is NOT cache. Wiping `~/.cache/gmux` must cost you summaries,
+ * Config is NOT cache. Wiping `~/.cache/gigamanage` must cost you summaries,
  * never your provider choice — which is why this lives under the config dir and
  * is keyed by nothing.
  */
@@ -228,16 +228,16 @@ export interface GmConfig {
   version: number;
   /**
    * null means "make no model calls". A supported answer, not a missing value —
-   * `gmux setup` offers it, and it is how you decline the token spend outright.
+   * `gm setup` offers it, and it is how you decline the token spend outright.
    */
   provider: ProviderChoice | null;
   /** Keep the recent window summarized in the background. */
   autoSummarize: boolean;
-  /** gmux daemon + guardian settings. Absent on configs written before gmux. */
-  gmux?: import("./gmux-types.js").GmuxConfig;
+  /** Daemon + guardian settings. Absent on configs written before this block existed. */
+  gigamanage?: import("./workspace-types.js").GigamanageConfig;
 }
 
-/** One exchange in an `gmux ask` conversation. */
+/** One exchange in an `gm ask` conversation. */
 export interface AskTurn {
   question: string;
   answer: string;
@@ -269,7 +269,7 @@ export type AskEvent =
   | { t: "aborted"; seq: number; at: string }
   | { t: "error"; seq: number; at: string; message: string };
 
-/** Everything `gmux ask` knows about your sessions, before a question is asked. */
+/** Everything `gm ask` knows about your sessions, before a question is asked. */
 export interface AskContext {
   /** The sessions the picker/list had loaded. Summaries where they exist. */
   sessions: SessionView[];
@@ -282,7 +282,7 @@ export interface AskContext {
  *
  * Deliberately the same shape of contract as `SummaryProvider`: a prompt goes
  * in, text comes out. The difference is that the CLI behind it is invoked with
- * permission to run `gmux grep`, so the tool loop belongs to the harness rather
+ * permission to run `gm grep`, so the tool loop belongs to the harness rather
  * than to us.
  */
 export interface AskProvider {

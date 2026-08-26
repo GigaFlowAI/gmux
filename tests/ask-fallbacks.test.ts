@@ -66,7 +66,7 @@ describe("askTier", () => {
 
   it("keeps the `a` key when this build cannot address itself", () => {
     // The numbered fallback calls back into this process, so unlike every fzf
-    // tier it needs no shell command to re-invoke `gmux`.
+    // tier it needs no shell command to re-invoke `gm`.
     expect(askTier({ ...ready, hasFzf: false, fzfVersion: null, selfCommand: null })).toBe("prompt");
   });
 
@@ -79,7 +79,7 @@ describe("askTier", () => {
   });
 
   it("offers nothing in fzf when this build cannot address itself", () => {
-    // fzf runs `gmux` through a shell; with no way to name this build there is no
+    // fzf runs `gm` through a shell; with no way to name this build there is no
     // command to bind, at any version.
     expect(askTier({ ...ready, fzfVersion: [0, 74, 0], selfCommand: null })).toBe("none");
     expect(askTier({ ...ready, fzfVersion: [0, 46, 0], selfCommand: null })).toBe("none");
@@ -102,9 +102,9 @@ describe("supportsSplitChat", () => {
 describe("the fallback tiers' fzf arguments", () => {
   const spec = (overrides: Partial<FzfSpec> = {}): FzfSpec => ({
     multiline: true,
-    preview: "gmux show {1} --no-color",
-    reloadCmd: "gmux __picker-rows --width 44",
-    askCmd: "gmux ask --focus {1}",
+    preview: "gm show {1} --no-color",
+    reloadCmd: "gm __picker-rows --width 44",
+    askCmd: "gm ask --focus {1}",
     tier: "execute",
     ...overrides,
   });
@@ -128,7 +128,7 @@ describe("the fallback tiers' fzf arguments", () => {
   it("keeps today's full-screen REPL on the execute tier", () => {
     // `execute` suspends fzf and hands the child the terminal, restoring the
     // list when it exits. That is what 0.46-0.58 has and keeps.
-    expect(fzfArgs(spec())).toContain("--bind=ctrl-o:execute(gmux ask --focus {1})");
+    expect(fzfArgs(spec())).toContain("--bind=ctrl-o:execute(gm ask --focus {1})");
   });
 
   it("binds no ctrl-o on the tiers that have none", () => {

@@ -5,10 +5,10 @@
  * The design decision worth knowing before you change anything here:
  *
  * **The tool loop is the harness's, not ours.** The prompt tells the model it
- * may run `gmux grep '<query>' --json`, and the provider is invoked with exactly
+ * may run `gm grep '<query>' --json`, and the provider is invoked with exactly
  * that permission (see providers.ts `askArgv`). We parse no tool calls and speak
  * no vendor protocol — the abstraction stays "a CLI that reads a prompt and
- * writes text", which is the only reason gmux depends on no vendor SDK.
+ * writes text", which is the only reason gm depends on no vendor SDK.
  *
  * The cost is that we don't meter how many greps the model runs. Accepted: grep
  * is read-only and cheap, and the provider's own turn limit bounds it.
@@ -141,7 +141,7 @@ export function buildAskPrompt(
     "",
     "The summaries above are all you have by default. If answering well needs detail they don't carry — what was actually said, the text of an error, whether something was tried — you can search the full transcripts:",
     "",
-    "    gmux grep '<query>' --json",
+    "    gm grep '<query>' --json",
     "",
     "Useful flags: `-p <project>` narrows to one repo, `-n <count>` caps results, `-e` treats the query as a regex.",
     "Run it when it would change your answer. Don't run it to confirm something the summaries already say, and don't guess at detail you could have looked up.",
@@ -203,7 +203,7 @@ export class CliAskProvider implements AskProvider {
  * model calls.
  *
  * Null is an answer, not a failure — `provider: null` in config means exactly
- * this, and the caller renders it as "run `gmux setup`" rather than as an error.
+ * this, and the caller renders it as "run `gm setup`" rather than as an error.
  */
 export async function defaultAskProvider(): Promise<CliAskProvider | null> {
   const command = resolveAskCommand(await readConfig());

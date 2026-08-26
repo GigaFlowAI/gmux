@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import { formatBytes } from "../core/bytes.js";
-import type { GuardianPolicy, HostPressure, PaneEntry } from "../core/gmux-types.js";
+import type { GuardianPolicy, HostPressure, PaneEntry } from "../core/workspace-types.js";
 
 export interface GuardianDecision {
   action: "broadcast" | "notify" | "log-only" | "none";

@@ -1,5 +1,5 @@
 /**
- * The catalog of model CLIs gmux knows how to call.
+ * The catalog of model CLIs gm knows how to call.
  *
  * This is deliberately NOT `adapters/registry.ts`, and the two must not be
  * merged. They are different axes that only coincidentally share names today:
@@ -28,10 +28,10 @@ export interface ProviderSpec {
   /** argv for a one-shot summary call: prompt on stdin, text on stdout. */
   summaryArgv: string[];
   /**
-   * argv for an `gmux ask` call.
+   * argv for an `gm ask` call.
    *
    * Differs from `summaryArgv` in exactly one way: it grants the model
-   * permission to run `gmux grep`, so it can dig past the summaries into the
+   * permission to run `gm grep`, so it can dig past the summaries into the
    * transcripts. The tool loop is the harness's — we parse no tool calls.
    */
   askArgv: string[];
@@ -52,17 +52,17 @@ export const PROVIDERS: readonly ProviderSpec[] = [
     displayName: "Claude Code",
     binary: "claude",
     summaryArgv: ["claude", "-p"],
-    // Bash is scoped to `gmux grep` alone: the model may read what it already has
+    // Bash is scoped to `gm grep` alone: the model may read what it already has
     // the ids for, and nothing else. A blanket Bash grant would hand a session
     // summariser the whole machine.
-    askArgv: ["claude", "-p", "--allowedTools", "Bash(gmux grep:*)"],
+    askArgv: ["claude", "-p", "--allowedTools", "Bash(gm grep:*)"],
     install: "npm install -g @anthropic-ai/claude-code",
   },
   {
     id: "codex",
     displayName: "Codex",
     binary: "codex",
-    // These prompts describe sessions, not the repository gmux happens to be
+    // These prompts describe sessions, not the repository gm happens to be
     // launched from. Codex must therefore work outside a trusted git checkout.
     summaryArgv: ["codex", "exec", "--skip-git-repo-check"],
     askArgv: [
@@ -91,7 +91,7 @@ export function detectProviders(): ProviderSpec[] {
   return PROVIDERS.filter((provider) => onPath(provider.binary));
 }
 
-/** The provider we'd pick for someone who has never run `gmux setup`. */
+/** The provider we'd pick for someone who has never run `gm setup`. */
 export function firstDetected(): ProviderSpec | null {
   return detectProviders()[0] ?? null;
 }

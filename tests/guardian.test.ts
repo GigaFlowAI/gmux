@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Guardian } from "../src/services/guardian.js";
-import type { HostPressure, PaneEntry } from "../src/core/gmux-types.js";
+import type { HostPressure, PaneEntry } from "../src/core/workspace-types.js";
 
 const host = (used: number): HostPressure => ({ usedRatio: used, unattributed: 0, ts: 0 });
 const agent = (paneId: string, rss: number): PaneEntry => ({

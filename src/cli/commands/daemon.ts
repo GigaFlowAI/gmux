@@ -1,21 +1,21 @@
 /**
- * `gmux daemon` — the gmux workspace daemon.
+ * `gm daemon` — the gm workspace daemon.
  *
  * `run` starts the interval loop (tmux registry diff → sensors → classify →
  * write to the model) plus the `ModelServer` socket, foreground, supervised by
- * a PID lockfile so a second `gmux daemon run` refuses to double-start. `status`
+ * a PID lockfile so a second `gm daemon run` refuses to double-start. `status`
  * and `stop` read that same lock to report on / signal the running process.
  *
  * The lock is a small mirror of `services/auto-summarize.ts`'s lock: same
  * shape (`{ pid, startedAt }`), same staleness rule (owner dead, or too old).
- * It lives under `gmuxDir()` rather than `cacheDir()` directly because it is
- * gmux-specific ephemeral state, not shared with the rest of gmux.
+ * It lives under `daemonDir()` rather than `cacheDir()` directly because it is
+ * gm-specific ephemeral state, not shared with the rest of gm.
  */
 
 import type { Command } from "commander";
 
-import type { GmuxConfig } from "../../core/gmux-types.js";
-import { readConfig, resolveGmuxConfig } from "../../services/config.js";
+import type { GigamanageConfig } from "../../core/workspace-types.js";
+import { readConfig, resolveGigamanageConfig } from "../../services/config.js";
 import { Daemon, type DaemonDeps } from "../../services/daemon.js";
 import { readSnapshotFile } from "../../services/daemon-client.js";
 import {
@@ -91,7 +91,7 @@ export async function runDaemonLoop(deps: DaemonDeps, opts: LoopOpts): Promise<v
 }
 
 /**
- * Assemble the full `DaemonDeps` for a production `gmux daemon run` — all four
+ * Assemble the full `DaemonDeps` for a production `gm daemon run` — all four
  * phases wired: the base tick loop (gateway/model/clock), the LLM semantic
  * worker (Phase 1), and the resource monitor + memory guardian (Phase 2).
  *
@@ -106,15 +106,15 @@ export async function runDaemonLoop(deps: DaemonDeps, opts: LoopOpts): Promise<v
 export function buildDaemonDeps(
   gateway: TmuxGateway,
   model: WorkspaceModel,
-  gmuxCfg: GmuxConfig,
+  cfg: GigamanageConfig,
   provider: LabelProvider,
 ): DaemonDeps {
   const semantic = new SemanticWorker(model, provider, new SemanticGate());
   const resources = new ResourceMonitor();
   const guardian = new Guardian({
-    policy: gmuxCfg.guardianPolicy,
-    threshold: gmuxCfg.memoryThreshold,
-    cooldownSeconds: gmuxCfg.cooldownSeconds,
+    policy: cfg.guardianPolicy,
+    threshold: cfg.memoryThreshold,
+    cooldownSeconds: cfg.cooldownSeconds,
   });
   return { gateway, model, now: () => Date.now(), semantic, resources, guardian };
 }
@@ -139,7 +139,7 @@ export {
 // --- Command ------------------------------------------------------------
 
 export function registerDaemon(program: Command): void {
-  const cmd = program.command("daemon").description("run and manage the gmux workspace daemon");
+  const cmd = program.command("daemon").description("run and manage the gm workspace daemon");
 
   cmd
     .command("run", { isDefault: true })
@@ -160,7 +160,7 @@ export function registerDaemon(program: Command): void {
       // that fails to initialize, the socket path being unwritable, a stale
       // socket file that's somehow un-removable, ...); if any of it runs
       // outside a `try/finally` the lock file is leaked forever and every
-      // future `gmux daemon run` refuses to start until someone manually
+      // future `gm daemon run` refuses to start until someone manually
       // deletes it.
       let model: WorkspaceModel | undefined;
       let server: ModelServer | undefined;
@@ -170,29 +170,29 @@ export function registerDaemon(program: Command): void {
 
       try {
         const config = await readConfig();
-        const gmuxCfg = resolveGmuxConfig(config);
+        const cfg = resolveGigamanageConfig(config);
         const provider = await defaultLabelProvider();
         const gateway = new RealTmuxGateway();
         model = new WorkspaceModel();
-        const deps = buildDaemonDeps(gateway, model, gmuxCfg, provider);
+        const deps = buildDaemonDeps(gateway, model, cfg, provider);
         server = new ModelServer(model);
 
-        // Repaints every pane's `@gmux_label` on each model change — state
+        // Repaints every pane's `@gm_label` on each model change — state
         // only, zero sensing. Never lets a paint failure (e.g. a pane that
         // vanished mid-write) propagate into the model's "change" emitter
         // and take down the daemon loop.
         const paneModel = model;
         onChange = (): void => {
-          paintFromSnapshot(paneModel.snapshot(), (id, text) => gateway.setOption(id, "@gmux_label", text)).catch(() => {});
+          paintFromSnapshot(paneModel.snapshot(), (id, text) => gateway.setOption(id, "@gm_label", text)).catch(() => {});
         };
 
         await server.start();
         process.on("SIGINT", stop);
         process.on("SIGTERM", stop);
-        process.stdout.write(`${green("gmux daemon started")} (pid ${process.pid})\n`);
+        process.stdout.write(`${green("gm daemon started")} (pid ${process.pid})\n`);
         await enableBorder();
         model.on("change", onChange);
-        await runDaemonLoop(deps, { tickMs: gmuxCfg.tickMs, signal: ac.signal });
+        await runDaemonLoop(deps, { tickMs: cfg.tickMs, signal: ac.signal });
       } finally {
         if (model && onChange) model.off("change", onChange);
         process.off("SIGINT", stop);

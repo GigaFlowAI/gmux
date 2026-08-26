@@ -1,11 +1,11 @@
 /**
- * `gmux organize`: turns the live pane set into an `OrganizePlan` (grouping
+ * `gm organize`: turns the live pane set into an `OrganizePlan` (grouping
  * work by project into windows) and, on request, executes that plan against
  * the tmux gateway.
  *
  * Two planners share the `OrganizePlanner` interface:
  *   - `HeuristicOrganizePlanner` — deterministic, no model call, no I/O. The
- *     graceful floor: `gmux organize` with no intent and no provider always
+ *     graceful floor: `gm organize` with no intent and no provider always
  *     has something sensible to do.
  *   - `LlmOrganizePlanner` — reuses the same provider-CLI plumbing as session
  *     summaries (`resolveSummaryCommand` + `runProviderCommand`) to turn a

@@ -13,7 +13,7 @@ import {
   TerminalSensor,
   tsOf,
 } from "../src/services/sensors.js";
-import type { PaneIdentity } from "../src/core/gmux-types.js";
+import type { PaneIdentity } from "../src/core/workspace-types.js";
 
 const ident: PaneIdentity = {
   paneId: "%1", windowId: "@1", active: false, harness: null, sessionId: null,
@@ -94,7 +94,7 @@ describe("AgentSensor", () => {
   });
 
   it("tails a transcript file and derives signals", async () => {
-    dir = await mkdtemp(join(tmpdir(), "gmux-sensors-"));
+    dir = await mkdtemp(join(tmpdir(), "gm-sensors-"));
     const filePath = join(dir, "session.jsonl");
     const rows = [
       { type: "user", timestamp: "2026-08-11T00:00:00.000Z", message: { content: "hi" } },
@@ -131,7 +131,7 @@ describe("AgentSensor", () => {
   });
 
   it("retries resolution on a miss instead of caching it forever", async () => {
-    dir = await mkdtemp(join(tmpdir(), "gmux-sensors-"));
+    dir = await mkdtemp(join(tmpdir(), "gm-sensors-"));
     const filePath = join(dir, "session.jsonl");
     const rows = [{ type: "user", timestamp: "2026-08-11T00:00:00.000Z", message: { content: "hi" } }];
 

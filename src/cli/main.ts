@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * gmux — browse, search and resume agent coding sessions.
+ * gigamanage — browse, search and resume agent coding sessions.
  *
- * Every read command supports `--json`. That is deliberate: gmux is a tool
+ * Every read command supports `--json`. That is deliberate: gigamanage is a tool
  * for agents as much as for people, and an agent can only use what it can parse.
  */
 
@@ -10,7 +10,7 @@ import { createRequire } from "node:module";
 
 import { Command } from "commander";
 
-import { GmuxError } from "../core/errors.js";
+import { GigamanageError } from "../core/errors.js";
 import { maybeAutoSummarize } from "../services/auto-summarize.js";
 import { configExists, shouldRunSetupWizard } from "../services/config.js";
 import { registerAsk } from "./commands/ask.js";
@@ -50,7 +50,7 @@ const { version } = createRequire(import.meta.url)("../../package.json") as { ve
 const program = new Command();
 
 program
-  .name("gmux")
+  .name("gm")
   .description("Browse, search and resume your AI coding agent sessions.")
   .version(version)
   .option("--no-color", "disable coloured output")
@@ -61,10 +61,10 @@ program
     /**
      * First run: ask who to call, before spending anything on calling them.
      *
-     * Every gate here is load-bearing. `gmux ls --json` is an interface agents
+     * Every gate here is load-bearing. `gm ls --json` is an interface agents
      * call, and a version of it that can block on a human prompt is a broken
      * interface whatever it prints — so no TTY, or `--json`, or a `__`-prefixed
-     * internal command means we say nothing and behave exactly as gmux did before
+     * internal command means we say nothing and behave exactly as gm did before
      * config existed: autodetect and carry on.
      */
     const gate = {
@@ -79,19 +79,19 @@ program
    * Keep the ten most recent sessions summarized — in the background, always.
    *
    * This runs in `postAction`, after the command has already written its output,
-   * so `gmux ls` still returns in ~60ms. The work itself is handed to a detached
+   * so `gm ls` still returns in ~60ms. The work itself is handed to a detached
    * child that outlives us (see services/auto-summarize.ts); we only decide, and
-   * we tell the user on STDERR so `gmux ls --json` stays machine-readable.
+   * we tell the user on STDERR so `gm ls --json` stays machine-readable.
    *
    * The worker command is exempt, or it would spawn a copy of itself forever.
    */
   .hook("postAction", async (thisCommand, actionCommand) => {
     /**
-     * `__`-prefixed commands are the internals gmux spawns at itself, and none of
+     * `__`-prefixed commands are the internals gm spawns at itself, and none of
      * them may decide anything here — by prefix, not by a list that the next
      * hidden command has to remember to join. `__auto-summarize` would fork a
      * copy of itself; `__picker-rows` runs its own pass first; `__ask-send`
-     * inherits fzf's env, so GMUX_CHILD is unset and every question typed
+     * inherits fzf's env, so GIGAMANAGE_CHILD is unset and every question typed
      * into the chat pane would fork a summarize decision from inside fzf —
      * whose `notify` writes to the stderr fzf is painting. Same convention
      * `shouldRunSetupWizard` already uses.
@@ -126,7 +126,7 @@ registerPreviewCard(program);
 registerAskSend(program);
 registerAskRun(program);
 registerAskCancel(program);
-registerPick(program); // Also the default action when `gmux` is run bare.
+registerPick(program); // Also the default action when `gm` is run bare.
 registerOverlay(program);
 registerCockpit(program);
 registerTmux(program);
@@ -139,7 +139,7 @@ async function main(): Promise<void> {
   try {
     await program.parseAsync(process.argv);
   } catch (error) {
-    if (error instanceof GmuxError) {
+    if (error instanceof GigamanageError) {
       process.stderr.write(`${red("error")} ${error.message}\n`);
       if (error.fix) process.stderr.write(`${dim("fix")}   ${error.fix}\n`);
       process.exit(error.exitCode);

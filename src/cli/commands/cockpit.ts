@@ -5,7 +5,7 @@ import type { Command } from "commander";
 
 import { workReportPath } from "../../core/paths.js";
 import type { OrganizePlan } from "../../core/organize-types.js";
-import type { WorkspaceSnapshot } from "../../core/gmux-types.js";
+import type { WorkspaceSnapshot } from "../../core/workspace-types.js";
 import type { SessionRecord } from "../../core/types.js";
 import { buildAskContext, buildAskPrompt, defaultAskProvider } from "../../services/ask.js";
 import { classifyIntent } from "../../services/ask-router.js";
@@ -15,7 +15,7 @@ import { HeuristicOrganizePlanner, LlmOrganizePlanner, applyPlan } from "../../s
 import { RealTmuxGateway } from "../../services/tmux-gateway.js";
 import { attachSummaries, loadCachedRecords } from "../../services/views.js";
 import { buildWorkViews, defaultWorkViewProvider } from "../../services/work-view.js";
-import { renderCockpit, type CockpitAsk, type RenderCockpitOptions } from "../gmux-render.js";
+import { renderCockpit, type CockpitAsk, type RenderCockpitOptions } from "../cockpit-render.js";
 import { confirmFrameLines, confirmKey, makeGeneration } from "../organize-confirm.js";
 import { askBoxLines, askCursorColumn } from "../overlay-ask.js";
 import { fromPaneEntry } from "./organize.js";
@@ -80,7 +80,7 @@ interface AskState {
 export function registerCockpit(program: Command): void {
   program
     .command("cockpit")
-    .description("pull up the gmux workspace cockpit (used by the tmux ctrl-g binding)")
+    .description("pull up the gm workspace cockpit (used by the tmux ctrl-g binding)")
     .action(async () => {
       let latest: WorkspaceSnapshot | null = null;
       let stale: { ageMs: number } | null = null;
@@ -142,7 +142,7 @@ export function registerCockpit(program: Command): void {
           );
           const cards: WorkReportCard[] = sessions.map(({ label, record }) => {
             const headline = headlines.get(record.sessionId) ?? null;
-            if (!built) return { label, headline, html: null, note: "no model configured — run `gmux setup`" };
+            if (!built) return { label, headline, html: null, note: "no model configured — run `gm setup`" };
             const view = built.views.get(record.sessionId);
             if (view) return { label, headline, html: view.html, note: null };
             const reason = built.failed.find((f) => f.sessionId === record.sessionId)?.reason ?? "unknown";
@@ -168,7 +168,7 @@ export function registerCockpit(program: Command): void {
         ask = { question, entries: sessions.map((s) => ({ label: s.label, sessionId: s.record.sessionId })), answers };
         const provider = await defaultAskProvider();
         if (!provider) {
-          for (const s of sessions) answers.set(s.record.sessionId, "No model configured — run `gmux setup`.");
+          for (const s of sessions) answers.set(s.record.sessionId, "No model configured — run `gm setup`.");
           busy = false; status = null; render();
           return;
         }
@@ -241,7 +241,7 @@ export function registerCockpit(program: Command): void {
                   try {
                     if (plan) await applyPlan(plan, new RealTmuxGateway());
                   } catch (error) {
-                    process.stderr.write(`gmux: organize apply failed — ${(error as Error).message}\n`);
+                    process.stderr.write(`gm: organize apply failed — ${(error as Error).message}\n`);
                   }
                   return done();
                 case "exit":

@@ -2,7 +2,7 @@
 /**
  * Layer check.
  *
- * gmux has a strict one-way dependency rule:
+ * gm has a strict one-way dependency rule:
  *
  *     core  ←  adapters  ←  services  ←  cli
  *

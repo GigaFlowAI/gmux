@@ -108,7 +108,7 @@ export function wrapText(input: string, width: number): string[] {
 /**
  * Single-quote for POSIX shells, escaping any embedded single quote.
  *
- * Lives in core because two callers need it: `gmux resume --print` emits a line
+ * Lives in core because two callers need it: `gm resume --print` emits a line
  * meant to be pasted into a shell, and the picker's fzf reload binding is a
  * shell command string. In both, an unquoted path with a space silently runs
  * the wrong thing rather than failing loudly.

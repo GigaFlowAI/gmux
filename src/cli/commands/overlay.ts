@@ -153,7 +153,7 @@ async function runOverlay(windowId: string): Promise<void> {
     state.ask = { question, answers };
 
     if (!provider) {
-      for (const r of present) answers.set(r.sessionId, "No model configured — run `gmux setup`.");
+      for (const r of present) answers.set(r.sessionId, "No model configured — run `gm setup`.");
       await drawAll();
       return;
     }

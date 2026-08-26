@@ -1,5 +1,5 @@
 /**
- * `gmux __ask-send` — what enter does in the picker's ask mode.
+ * `gm __ask-send` — what enter does in the picker's ask mode.
  *
  * ~170ms of work and then it is gone: take the lock, append the question,
  * fork the worker, tell the pane to repaint. It never calls a model. The model
@@ -115,7 +115,7 @@ export async function sendAskQuestion(options: AskSendOptions): Promise<AskSendS
     // without a provider, so reaching here means config changed under a live
     // picker — the question is still echoed, and the answer slot says why.
     if (!argv) {
-      const failed = new NoProviderError("`gmux ask`");
+      const failed = new NoProviderError("`gm ask`");
       appendAskEvent(fd, {
         t: "error",
         seq,

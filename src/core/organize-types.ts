@@ -1,5 +1,5 @@
 /**
- * Pure plan representation for `gmux organize`.
+ * Pure plan representation for `gm organize`.
  *
  * A plan never carries a destructive op: the tagged union below is 1:1 with
  * the tmux gateway's relocation verbs (`newWindow`, `renameWindow`,
@@ -9,7 +9,7 @@
  * destroys their processes.
  */
 
-import type { PaneState } from "./gmux-types.js";
+import type { PaneState } from "./workspace-types.js";
 
 /** tmux preset layouts we allow the planner to choose. */
 export const LAYOUTS = [

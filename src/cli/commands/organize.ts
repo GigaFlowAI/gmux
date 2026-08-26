@@ -1,5 +1,5 @@
 /**
- * `gmux organize [intent...]`: turn the live tmux pane set into a plan that
+ * `gm organize [intent...]`: turn the live tmux pane set into a plan that
  * groups panes into per-project windows, print it as a numbered dry-run
  * preview, and — only with `--apply` — execute it against real tmux.
  *
@@ -11,7 +11,7 @@
 import type { Command } from "commander";
 
 import type { OrganizePane, OrganizePlan, OrganizePlanner } from "../../core/organize-types.js";
-import type { PaneEntry, PaneIdentity } from "../../core/gmux-types.js";
+import type { PaneEntry, PaneIdentity } from "../../core/workspace-types.js";
 import { readSnapshotFile } from "../../services/daemon-client.js";
 import { HeuristicOrganizePlanner, LlmOrganizePlanner, applyPlan } from "../../services/organize.js";
 import { PaneRegistry } from "../../services/pane-registry.js";

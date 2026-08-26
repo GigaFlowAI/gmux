@@ -23,7 +23,7 @@ jobs:
 
       - run: npm ci
 
-      # `gmux grep` shells out to ripgrep, and the search tests exercise it for
+      # `gm grep` shells out to ripgrep, and the search tests exercise it for
       # real rather than mocking it. Not preinstalled on the runner.
       - name: Install ripgrep
         run: sudo apt-get update && sudo apt-get install -y ripgrep

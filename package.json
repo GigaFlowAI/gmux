@@ -1,31 +1,30 @@
 {
-  "name": "@gigaflow/gmux",
-  "version": "0.16.0",
-  "description": "gmux — an LLM-native layer over your tmux workspace: browse, search and resume your AI coding agent sessions across Claude Code, Codex, and any other harness.",
+  "name": "gigamanage",
+  "version": "0.17.0",
+  "description": "Browse, search and resume your AI coding agent sessions — across Claude Code, Codex, and any other harness.",
   "keywords": [
-    "gmux",
-    "tmux",
-    "multiplexer",
     "claude-code",
     "codex",
     "agent",
     "sessions",
     "cli",
     "context-switching",
-    "harness"
+    "harness",
+    "tmux"
   ],
   "license": "MIT",
   "type": "module",
-  "homepage": "https://github.com/GigaFlowAI/gmux#readme",
+  "homepage": "https://github.com/GigaFlowAI/gigamanage#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/GigaFlowAI/gmux.git"
+    "url": "git+https://github.com/GigaFlowAI/gigamanage.git"
   },
   "bugs": {
-    "url": "https://github.com/GigaFlowAI/gmux/issues"
+    "url": "https://github.com/GigaFlowAI/gigamanage/issues"
   },
   "bin": {
-    "gmux": "dist/cli/main.js"
+    "gm": "dist/cli/main.js",
+    "gigamanage": "dist/cli/main.js"
   },
   "files": [
     "dist",
@@ -45,7 +44,7 @@
     "dev": "tsx src/cli/main.ts",
     "test": "npm run check:layers && vitest run",
     "test:watch": "vitest",
-    "test:e2e": "npm run build && GMUX_E2E=1 vitest run tests/e2e",
+    "test:e2e": "npm run build && GIGAMANAGE_E2E=1 vitest run tests/e2e",
     "check:layers": "node scripts/check-layers.mjs",
     "check:types": "tsc --noEmit",
     "check": "npm run check:layers && npm run check:types && vitest run",

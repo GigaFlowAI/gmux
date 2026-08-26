@@ -1,5 +1,5 @@
 /**
- * The `gmux daemon run` PID lockfile — extracted to its own leaf module (no
+ * The `gm daemon run` PID lockfile — extracted to its own leaf module (no
  * dependents within `cli/`) so `cli/tmux-label.ts` can detect a live daemon
  * without importing `cli/commands/daemon.ts` (which itself imports
  * `cli/tmux-label.ts` for `enableBorder`, and a cycle between the two is
@@ -7,14 +7,14 @@
  *
  * Same shape (`{ pid, startedAt }`) and staleness rule as
  * `services/auto-summarize.ts`'s lock: owner dead, or too old. It lives under
- * `gmuxDir()` rather than `cacheDir()` directly because it is gmux-specific
- * ephemeral state, not shared with the rest of gmux.
+ * `daemonDir()` rather than `cacheDir()` directly because it is gm-specific
+ * ephemeral state, not shared with the rest of gm.
  */
 
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { gmuxDir } from "../core/paths.js";
+import { daemonDir } from "../core/paths.js";
 
 /** A lock older than this belongs to a process that died without cleaning up. */
 export const DAEMON_LOCK_STALE_MS = 10 * 60_000;
@@ -25,7 +25,7 @@ export interface DaemonLock {
 }
 
 export function daemonLockPath(): string {
-  return join(gmuxDir(), "daemon.lock");
+  return join(daemonDir(), "daemon.lock");
 }
 
 function processAlive(pid: number): boolean {
@@ -65,7 +65,7 @@ export async function readDaemonLock(): Promise<DaemonLock | null> {
 }
 
 async function writeDaemonLock(lock: DaemonLock): Promise<void> {
-  await mkdir(gmuxDir(), { recursive: true });
+  await mkdir(daemonDir(), { recursive: true });
   await writeFile(daemonLockPath(), JSON.stringify(lock), "utf8");
 }
 

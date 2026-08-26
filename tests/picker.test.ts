@@ -17,7 +17,7 @@ describe("filterArgs", () => {
     expect(filterArgs({})).toEqual([]);
   });
 
-  it("carries every filter, in flags gmux parses", () => {
+  it("carries every filter, in flags gm parses", () => {
     expect(
       filterArgs({
         harness: "codex",

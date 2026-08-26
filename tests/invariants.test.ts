@@ -13,7 +13,7 @@ class Busy implements Sensor {
   async teardown() {}
 }
 
-describe("gmux invariants", () => {
+describe("gm invariants", () => {
   it("a gateway that throws on listPanes does not crash the tick", async () => {
     const gw = new FakeTmuxGateway();
     (gw as any).listPanes = async () => {

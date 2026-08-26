@@ -1,5 +1,5 @@
 /**
- * `gmux organize`: the pure preview renderer only. The live tmux path
+ * `gm organize`: the pure preview renderer only. The live tmux path
  * (sensing panes, constructing `RealTmuxGateway`, calling `applyPlan`) is
  * exercised in `organize.test.ts` (planner/apply units) — this file stays
  * hermetic and just checks the dry-run text `registerOrganize`'s action

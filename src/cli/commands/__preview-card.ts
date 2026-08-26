@@ -1,11 +1,11 @@
 /**
- * `gmux __preview-card` — what fills the picker's preview pane.
+ * `gm __preview-card` — what fills the picker's preview pane.
  *
- * **Not `gmux show --chat <path>`.** `gmux show` is a public command and `--chat` is
+ * **Not `gm show --chat <path>`.** `gm show` is a public command and `--chat` is
  * a private IPC channel: it is meaningless to a human at a terminal and exists
  * only because fzf's preview command must be a shell string. So the preview gets
  * a hidden command that calls the same renderer, `__picker-rows`' precedent, and
- * **`gmux show`'s flags, output and `--json` schema are exactly as they were.**
+ * **`gm show`'s flags, output and `--json` schema are exactly as they were.**
  *
  * **It re-runs on EVERY cursor move, and it must never call a model.** That is
  * the hard correctness constraint the whole chat design hangs off: the chat half
@@ -63,7 +63,7 @@ export async function renderPreviewCard(
   now: Date = new Date(),
 ): Promise<string> {
   // Naming a session explicitly means you want it, whatever kind it is — the
-  // same rule `gmux show` follows, because this is the same card.
+  // same rule `gm show` follows, because this is the same card.
   const records = await loadRecords({ includeSidechains: true, includeAutomated: true });
   const record = resolveSession(records, id);
   const summary = await readSummary(record);

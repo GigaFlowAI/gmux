@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { WorkspaceModel } from "../src/services/workspace.js";
-import type { PaneIdentity } from "../src/core/gmux-types.js";
+import type { PaneIdentity } from "../src/core/workspace-types.js";
 
 const ident: PaneIdentity = {
   paneId: "%1", windowId: "@1", active: true, harness: null, sessionId: null, cwd: "/x", command: "zsh", pid: 10,

@@ -1,7 +1,7 @@
 /**
- * `gmux setup` — choose the harness gmux calls for summaries and `gmux ask`.
+ * `gm setup` — choose the harness gm calls for summaries and `gm ask`.
  *
- * The wizard is the only place gmux asks a question. Everything it writes
+ * The wizard is the only place gm asks a question. Everything it writes
  * is a choice a human made, which is why it goes to the config dir rather than
  * the cache — see core/paths.ts.
  */
@@ -10,8 +10,8 @@ import { homedir } from "node:os";
 import { createInterface, type Interface } from "node:readline/promises";
 import type { Command } from "commander";
 
-import { GmuxError } from "../../core/errors.js";
-import { DEFAULT_GMUX_CONFIG, type GuardianPolicy } from "../../core/gmux-types.js";
+import { GigamanageError } from "../../core/errors.js";
+import { DEFAULT_GIGAMANAGE_CONFIG, type GuardianPolicy } from "../../core/workspace-types.js";
 import { configPath } from "../../core/paths.js";
 import { CONFIG_VERSION, type GmConfig, type ProviderChoice } from "../../core/types.js";
 import {
@@ -68,7 +68,7 @@ export function buildOptions(): Option[] {
 
   options.push({
     label: "Nothing — make no model calls",
-    detail: "no summaries, no `gmux ask`. `gmux ls` still works on hard facts alone",
+    detail: "no summaries, no `gm ask`. `gm ls` still works on hard facts alone",
     choose: async () => null,
   });
 
@@ -89,8 +89,8 @@ export function buildOptions(): Option[] {
  */
 function requireTty(): void {
   if (process.stdin.isTTY === true && process.stdout.isTTY === true) return;
-  throw new GmuxError("`gmux setup` needs an interactive terminal.", {
-    fix: `Run it in a terminal. To configure without one, set GMUX_SUMMARY_CMD='claude -p', or write ${configPath()} directly.`,
+  throw new GigamanageError("`gm setup` needs an interactive terminal.", {
+    fix: `Run it in a terminal. To configure without one, set GIGAMANAGE_SUMMARY_CMD='claude -p', or write ${configPath()} directly.`,
     exitCode: 3,
   });
 }
@@ -117,20 +117,20 @@ async function askYesNo(rl: Interface, question: string, fallback: boolean): Pro
 }
 
 /**
- * The one place gmux discloses that gmux can act on its own.
+ * The one place gm discloses that gm can act on its own.
  *
  * Every other config choice here is passive — which harness to call, whether
  * to summarize in the background. This is the one that reaches into a pane
  * and types something, so it gets its own prominent prompt rather than
  * riding along inside another question, and an explicit default rather than
  * a silent one: pressing enter is still a choice, just the one most people
- * want (see DEFAULT_GMUX_CONFIG.guardianPolicy).
+ * want (see DEFAULT_GIGAMANAGE_CONFIG.guardianPolicy).
  */
 async function askGuardianPolicy(rl: Interface): Promise<GuardianPolicy> {
   process.stdout.write(
-    `\n${bold("The gmux memory guardian")}\n${dim(
+    `\n${bold("The gm memory guardian")}\n${dim(
       'It can type a "checkpoint and pause" message INTO your agent panes when host memory\n' +
-        "runs critically low. This is the one action gmux takes on your behalf.",
+        "runs critically low. This is the one action gm takes on your behalf.",
     )}\n\n`,
   );
   process.stdout.write(`  1. ${bold("auto")}     ${dim("broadcast the checkpoint message automatically (default)")}\n`);
@@ -149,7 +149,7 @@ async function askGuardianPolicy(rl: Interface): Promise<GuardianPolicy> {
 /**
  * The wizard itself. Returns the config it wrote.
  *
- * Takes its own readline interface so the first-run caller and `gmux setup` share
+ * Takes its own readline interface so the first-run caller and `gm setup` share
  * one implementation and one teardown.
  */
 export async function runSetupWizard(options: { firstRun?: boolean } = {}): Promise<GmConfig> {
@@ -161,12 +161,12 @@ export async function runSetupWizard(options: { firstRun?: boolean } = {}): Prom
 
     if (options.firstRun) {
       process.stdout.write(
-        `\n${bold("Welcome to gmux.")}\n${dim(
-          "One question before we start: summaries cost model calls, so gmux won't make any until you say who to call.",
+        `\n${bold("Welcome to gm.")}\n${dim(
+          "One question before we start: summaries cost model calls, so gm won't make any until you say who to call.",
         )}\n`,
       );
     } else {
-      process.stdout.write(`\n${bold("gmux setup")}\n`);
+      process.stdout.write(`\n${bold("gm setup")}\n`);
     }
 
     if (existing) {
@@ -176,14 +176,14 @@ export async function runSetupWizard(options: { firstRun?: boolean } = {}): Prom
       process.stdout.write(`${dim(`currently: ${current}`)}\n`);
     }
 
-    process.stdout.write(`\n${bold("Which harness should gmux use for model calls?")}\n`);
+    process.stdout.write(`\n${bold("Which harness should gm use for model calls?")}\n`);
     process.stdout.write(
-      `${dim("Used to summarize where your sessions landed, and to answer `gmux ask`.")}\n\n`,
+      `${dim("Used to summarize where your sessions landed, and to answer `gm ask`.")}\n\n`,
     );
 
     const menu = buildOptions();
     // Default to the first installed provider — the answer most people want,
-    // and the one that reproduces gmux's behavior before config existed.
+    // and the one that reproduces gm's behavior before config existed.
     const firstInstalled = menu.findIndex((_, i) => {
       const spec = PROVIDERS[i];
       return spec ? onPath(spec.binary) : false;
@@ -202,8 +202,8 @@ export async function runSetupWizard(options: { firstRun?: boolean } = {}): Prom
     const picked = menu[(await askChoice(rl, menu, fallback)) - 1]!;
     const provider = await picked.choose(rl);
 
-    if (existing?.gmux) {
-      process.stdout.write(`${dim(`guardian currently: ${existing.gmux.guardianPolicy}`)}\n`);
+    if (existing?.gigamanage) {
+      process.stdout.write(`${dim(`guardian currently: ${existing.gigamanage.guardianPolicy}`)}\n`);
     }
     const guardianPolicy = await askGuardianPolicy(rl);
 
@@ -212,7 +212,7 @@ export async function runSetupWizard(options: { firstRun?: boolean } = {}): Prom
       ? await askYesNo(
           rl,
           `\n${bold("Keep your 20 most recent sessions summarized in the background?")}\n${dim(
-            "This spends tokens as you work. gmux ls stays instant either way.",
+            "This spends tokens as you work. gm ls stays instant either way.",
           )}\n`,
           true,
         )
@@ -222,17 +222,17 @@ export async function runSetupWizard(options: { firstRun?: boolean } = {}): Prom
       version: CONFIG_VERSION,
       provider,
       autoSummarize,
-      gmux: { ...DEFAULT_GMUX_CONFIG, guardianPolicy },
+      gigamanage: { ...DEFAULT_GIGAMANAGE_CONFIG, guardianPolicy },
     };
     await writeConfig(config);
 
     process.stdout.write(`\n${green("✓")} ${dim(`saved to ${configPath()}`)}\n`);
     process.stdout.write(
       provider
-        ? `${dim("gmux will call")} ${cyan(provider.command.join(" "))}${dim(". Change it any time with `gmux setup`.")}\n\n`
-        : `${dim("gmux will make no model calls. Run `gmux setup` if you change your mind.")}\n\n`,
+        ? `${dim("gm will call")} ${cyan(provider.command.join(" "))}${dim(". Change it any time with `gm setup`.")}\n\n`
+        : `${dim("gm will make no model calls. Run `gm setup` if you change your mind.")}\n\n`,
     );
-    process.stdout.write(`${dim(`guardian: ${guardianPolicy}. Change it any time with \`gmux setup\`.`)}\n\n`);
+    process.stdout.write(`${dim(`guardian: ${guardianPolicy}. Change it any time with \`gm setup\`.`)}\n\n`);
 
     const tmux = await maybeInstallTmuxBindings({
       available: onPath("tmux"),
@@ -247,7 +247,7 @@ export async function runSetupWizard(options: { firstRun?: boolean } = {}): Prom
     }
 
     process.stdout.write(
-      `${dim("Start the workspace daemon with `gmux daemon` (leave it running). Nothing autostarts.")}\n\n`,
+      `${dim("Start the workspace daemon with `gm daemon` (leave it running). Nothing autostarts.")}\n\n`,
     );
 
     return config;
@@ -259,7 +259,7 @@ export async function runSetupWizard(options: { firstRun?: boolean } = {}): Prom
 export function registerSetup(program: Command): void {
   program
     .command("setup")
-    .description("choose the harness gmux uses for model calls, the guardian policy, and tmux bindings")
+    .description("choose the harness gm uses for model calls, the guardian policy, and tmux bindings")
     .action(async () => {
       await runSetupWizard();
     });

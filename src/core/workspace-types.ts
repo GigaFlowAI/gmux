@@ -93,8 +93,8 @@ export interface GuardianLogEntry {
 /** Guardian autonomy policy. */
 export type GuardianPolicy = "off" | "notify" | "auto";
 
-/** The gmux config block, persisted under GmConfig. */
-export interface GmuxConfig {
+/** The gm config block, persisted under GmConfig. */
+export interface GigamanageConfig {
   guardianPolicy: GuardianPolicy;
   /** Host used fraction that trips the guardian, 0..1. */
   memoryThreshold: number;
@@ -114,7 +114,7 @@ export interface WorkspaceSnapshot {
 }
 
 /** Defaults for a fresh install. */
-export const DEFAULT_GMUX_CONFIG: GmuxConfig = {
+export const DEFAULT_GIGAMANAGE_CONFIG: GigamanageConfig = {
   guardianPolicy: "auto",
   memoryThreshold: 0.9,
   cooldownSeconds: 300,

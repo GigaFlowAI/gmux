@@ -44,7 +44,7 @@ export function refreshRequest(port: number, apiKey: string): RefreshRequest {
  * The notifier for this process, or a no-op.
  *
  * No port or no key means no POST at all: there is no unauthenticated path here
- * to accidentally take. A missing port is also the normal case for `gmux __ask-*`
+ * to accidentally take. A missing port is also the normal case for `gm __ask-*`
  * driven straight from a shell, where there is no pane to repaint.
  */
 export function refreshNotifier(port: string | undefined, env: NodeJS.ProcessEnv = process.env): () => void {

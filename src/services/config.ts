@@ -1,16 +1,16 @@
 /**
- * Config: the one thing gmux remembers because a human said so.
+ * Config: the one thing gm remembers because a human said so.
  *
- * Everything else in `~/.cache/gmux` is derived and disposable. This
+ * Everything else in `~/.cache/gigamanage` is derived and disposable. This
  * isn't, which is why it lives under the config dir instead — see core/paths.ts.
  *
  * Two rules run through this file:
  *
  * 1. **A bad config is not an error.** Unreadable, malformed, or written by a
- *    future version — all are treated as *absent*. `gmux ls` must not die because
+ *    future version — all are treated as *absent*. `gm ls` must not die because
  *    a JSON file got truncated; it should fall back to the behavior of someone
- *    who never ran `gmux setup`, which is a behavior that works.
- * 2. **The env var wins.** `GMUX_SUMMARY_CMD` sat on top before config
+ *    who never ran `gm setup`, which is a behavior that works.
+ * 2. **The env var wins.** `GIGAMANAGE_SUMMARY_CMD` sat on top before config
  *    existed, and every script, test and CI job that sets it must keep working
  *    without being told about a new file.
  */
@@ -19,7 +19,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { configPath } from "../core/paths.js";
-import { DEFAULT_GMUX_CONFIG, type GuardianPolicy, type GmuxConfig } from "../core/gmux-types.js";
+import { DEFAULT_GIGAMANAGE_CONFIG, type GuardianPolicy, type GigamanageConfig } from "../core/workspace-types.js";
 import { CONFIG_VERSION, type GmConfig, type ProviderChoice } from "../core/types.js";
 import { askArgvFor, firstDetected, summaryArgvFor, type ProviderSpec } from "./providers.js";
 
@@ -27,17 +27,17 @@ import { askArgvFor, firstDetected, summaryArgvFor, type ProviderSpec } from "./
 export const FALLBACK_COMMAND: readonly string[] = ["claude", "-p"];
 
 /** The env var that outranks everything here. */
-export const SUMMARY_CMD_ENV = "GMUX_SUMMARY_CMD";
+export const SUMMARY_CMD_ENV = "GIGAMANAGE_SUMMARY_CMD";
 
 /**
- * Set on any `gmux` we spawn ourselves.
+ * Set on any `gm` we spawn ourselves.
  *
- * THE RECURSION GUARD. `gmux ask` runs a provider that may run `gmux grep`, and
- * `gmux grep` would otherwise fire the postAction hook and spawn a summarizer —
+ * THE RECURSION GUARD. `gm ask` runs a provider that may run `gm grep`, and
+ * `gm grep` would otherwise fire the postAction hook and spawn a summarizer —
  * from inside a process that a summarizer-adjacent call started. The lock would
  * absorb most of it; this stops it being a question in the first place.
  */
-export const CHILD_ENV = "GMUX_CHILD";
+export const CHILD_ENV = "GIGAMANAGE_CHILD";
 
 export function isChildProcess(env: NodeJS.ProcessEnv = process.env): boolean {
   const raw = env[CHILD_ENV];
@@ -95,24 +95,31 @@ export function parseConfig(raw: string): GmConfig | null {
     if (!provider) return null;
   }
 
-  // gmux is newer than the rest of GmConfig, so its absence — or a partial
-  // block from a version that wrote fewer fields — must not untrust the whole
-  // file. resolveGmuxConfig fills in whatever this leaves out.
-  const gmux = parseGmuxBlock(object["gmux"]);
+  // The gigamanage block is newer than the rest of GmConfig, so its absence —
+  // or a partial block from a version that wrote fewer fields — must not
+  // untrust the whole file. Accept `gmux` as a one-release read alias.
+  const gigamanage = parseGigamanageBlock(
+    object["gigamanage"] ?? object["gmux"] ?? object["gm"],
+  );
 
-  return { version, provider, autoSummarize: object["autoSummarize"], ...(gmux ? { gmux } : {}) };
+  return {
+    version,
+    provider,
+    autoSummarize: object["autoSummarize"],
+    ...(gigamanage ? { gigamanage } : {}),
+  };
 }
 
 /**
- * Parse the gmux block leniently: field-by-field, keeping whatever is
+ * Parse the gm block leniently: field-by-field, keeping whatever is
  * well-typed and dropping the rest — never the whole block, and never the
- * config it lives in. `resolveGmuxConfig` is what turns this partial result
- * into a complete `GmuxConfig`.
+ * config it lives in. `resolveGigamanageConfig` is what turns this partial result
+ * into a complete `GigamanageConfig`.
  */
-function parseGmuxBlock(value: unknown): GmuxConfig | undefined {
+function parseGigamanageBlock(value: unknown): GigamanageConfig | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const object = value as Record<string, unknown>;
-  const result: Partial<GmuxConfig> = {};
+  const result: Partial<GigamanageConfig> = {};
   if (object["guardianPolicy"] === "off" || object["guardianPolicy"] === "notify" || object["guardianPolicy"] === "auto") {
     result.guardianPolicy = object["guardianPolicy"];
   }
@@ -120,28 +127,28 @@ function parseGmuxBlock(value: unknown): GmuxConfig | undefined {
   if (typeof object["cooldownSeconds"] === "number") result.cooldownSeconds = object["cooldownSeconds"];
   if (typeof object["tickMs"] === "number") result.tickMs = object["tickMs"];
   if (Object.keys(result).length === 0) return undefined;
-  return result as GmuxConfig;
+  return result as GigamanageConfig;
 }
 
 /**
- * Fill in whatever a stored `gmux` block leaves out, from `DEFAULT_GMUX_CONFIG`.
+ * Fill in whatever a stored `gigamanage` block leaves out, from `DEFAULT_GIGAMANAGE_CONFIG`.
  *
  * Never fails on a missing or partial block — older configs have none at all,
- * and `parseGmuxBlock` above only ever keeps well-typed fields, so what
+ * and `parseGigamanageBlock` above only ever keeps well-typed fields, so what
  * reaches here is trustworthy as far as it goes.
  */
-export function resolveGmuxConfig(config: GmConfig | null): GmuxConfig {
-  const g = config?.gmux;
-  if (!g) return { ...DEFAULT_GMUX_CONFIG };
+export function resolveGigamanageConfig(config: GmConfig | null): GigamanageConfig {
+  const g = config?.gigamanage;
+  if (!g) return { ...DEFAULT_GIGAMANAGE_CONFIG };
   const policy: GuardianPolicy =
     g.guardianPolicy === "off" || g.guardianPolicy === "notify" || g.guardianPolicy === "auto"
       ? g.guardianPolicy
-      : DEFAULT_GMUX_CONFIG.guardianPolicy;
+      : DEFAULT_GIGAMANAGE_CONFIG.guardianPolicy;
   return {
     guardianPolicy: policy,
-    memoryThreshold: typeof g.memoryThreshold === "number" ? g.memoryThreshold : DEFAULT_GMUX_CONFIG.memoryThreshold,
-    cooldownSeconds: typeof g.cooldownSeconds === "number" ? g.cooldownSeconds : DEFAULT_GMUX_CONFIG.cooldownSeconds,
-    tickMs: typeof g.tickMs === "number" ? g.tickMs : DEFAULT_GMUX_CONFIG.tickMs,
+    memoryThreshold: typeof g.memoryThreshold === "number" ? g.memoryThreshold : DEFAULT_GIGAMANAGE_CONFIG.memoryThreshold,
+    cooldownSeconds: typeof g.cooldownSeconds === "number" ? g.cooldownSeconds : DEFAULT_GIGAMANAGE_CONFIG.cooldownSeconds,
+    tickMs: typeof g.tickMs === "number" ? g.tickMs : DEFAULT_GIGAMANAGE_CONFIG.tickMs,
   };
 }
 
@@ -178,7 +185,7 @@ export async function readConfig(): Promise<GmConfig | null> {
  *
  * Distinct from `readConfig() !== null` on purpose: the first-run wizard keys
  * off *existence*, so a corrupt file doesn't re-launch the wizard on every
- * single run. It falls back to defaults quietly instead, and `gmux doctor` says so.
+ * single run. It falls back to defaults quietly instead, and `gm doctor` says so.
  */
 export async function configExists(): Promise<boolean> {
   try {
@@ -203,7 +210,7 @@ export async function writeConfig(config: GmConfig): Promise<void> {
  *
  * Splitting on whitespace alone was wrong in a way that fails quietly: a
  * perfectly reasonable `llm -m "model name"` became four arguments with literal
- * quote characters embedded — `["llm","-m","\"model","name\""]` — and gmux then
+ * quote characters embedded — `["llm","-m","\"model","name\""]` — and gm then
  * spawned a command the user never typed. The wizard invites free-form input, so
  * "don't type spaces in your arguments" is not a rule we get to have.
  *
@@ -243,7 +250,7 @@ export function parseCommand(input: string): string[] {
 
     if (quote === null && (char === '"' || char === "'")) {
       quote = char;
-      started = true; // `gmux ask ""` is an empty argument, not an absent one.
+      started = true; // `gm ask ""` is an empty argument, not an absent one.
       continue;
     }
 
@@ -267,7 +274,7 @@ export function parseCommand(input: string): string[] {
  * rule can be tested without a machine that happens to have Claude installed.
  *
  * Highest wins:
- *   1. GMUX_SUMMARY_CMD
+ *   1. GIGAMANAGE_SUMMARY_CMD
  *   2. config.provider.command
  *   3. first detected provider
  *   4. `claude -p`
@@ -294,10 +301,10 @@ export function resolveSummaryCommand(
 }
 
 /**
- * The command to use for `gmux ask`, or null for "make no model calls".
+ * The command to use for `gm ask`, or null for "make no model calls".
  *
  * Same precedence, but the catalog's `askArgv` is used where we recognise the
- * provider — that's the variant permitted to run `gmux grep`.
+ * provider — that's the variant permitted to run `gm grep`.
  */
 export function resolveAskCommand(
   config: GmConfig | null,
@@ -316,7 +323,7 @@ export function resolveAskCommand(
 /**
  * Whether background summaries are allowed.
  *
- * `GMUX_AUTO_SUMMARIZE=0` is checked by the caller and still wins. This
+ * `GIGAMANAGE_AUTO_SUMMARIZE=0` is checked by the caller and still wins. This
  * adds the config answer: a user who said "no" in the wizard has said it once
  * and for good, and must not be asked again by a token spend they declined.
  *
@@ -327,14 +334,14 @@ export function autoSummarizeAllowed(config: GmConfig | null): boolean {
 }
 
 /**
- * Whether a bare `gmux` should drop into the setup wizard.
+ * Whether a bare `gm` should drop into the setup wizard.
  *
  * Pure, and takes the world as data, because the interesting cases are exactly
  * the ones you cannot reproduce in a test terminal. Same reason `fzfArgs` is
  * split from the spawn.
  *
  * The TTY and `--json` gates are not politeness — they are non-negotiable #4.
- * `gmux ls --json` is an interface agents call; a version of it that can block on
+ * `gm ls --json` is an interface agents call; a version of it that can block on
  * a human prompt is a broken interface, whatever it prints.
  */
 export interface SetupGate {

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { FakeTmuxGateway } from "./fixtures/fake-gateway.js";
 import { WorkspaceModel } from "../src/services/workspace.js";
 import { Daemon } from "../src/services/daemon.js";
-import type { PaneIdentity, Observation } from "../src/core/gmux-types.js";
+import type { PaneIdentity, Observation } from "../src/core/workspace-types.js";
 import type { Sensor } from "../src/services/sensors.js";
 import type { TmuxPane } from "../src/core/types.js";
 

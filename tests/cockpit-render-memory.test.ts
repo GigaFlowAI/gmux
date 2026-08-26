@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { renderCockpit } from "../src/cli/gmux-render.js";
-import type { WorkspaceSnapshot, PaneEntry } from "../src/core/gmux-types.js";
+import { renderCockpit } from "../src/cli/cockpit-render.js";
+import type { WorkspaceSnapshot, PaneEntry } from "../src/core/workspace-types.js";
 
 const pane = (id: string, rss: number, name: string): PaneEntry => ({
   identity: { paneId: id, windowId: "@1", active: false, harness: null, sessionId: null, cwd: `/x/${name}`, command: "node", pid: 1 },

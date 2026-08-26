@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
-import type { HostPressure, PaneResources } from "../core/gmux-types.js";
+import type { HostPressure, PaneResources } from "../core/workspace-types.js";
 import { parsePsOutput, subtreeRss } from "../core/proc-tree.js";
 
 const run = promisify(execFile);

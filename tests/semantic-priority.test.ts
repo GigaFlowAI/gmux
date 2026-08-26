@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { WorkspaceModel } from "../src/services/workspace.js";
 import { SemanticGate } from "../src/services/semantic-gate.js";
 import { SemanticWorker, type LabelProvider } from "../src/services/semantic.js";
-import type { PaneEntry, Observation } from "../src/core/gmux-types.js";
+import type { PaneEntry, Observation } from "../src/core/workspace-types.js";
 
 const mk = (id: string, active: boolean, state: PaneEntry["state"]): PaneEntry => ({
   identity: { paneId: id, windowId: "@1", active, harness: null, sessionId: null, cwd: "/x", command: "zsh", pid: 1 },

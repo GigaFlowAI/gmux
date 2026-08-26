@@ -3,7 +3,7 @@
  *
  * The rules this suite exists to hold down:
  *
- *   - gmux never summarizes its own summarizer (the feedback loop);
+ *   - gm never summarizes its own summarizer (the feedback loop);
  *   - it never re-writes a summary that is still current (the money);
  *   - it never spawns two workers at once (the stampede);
  *   - and it can be switched off.
@@ -47,15 +47,15 @@ let cache: string;
 beforeEach(async () => {
   home = await tempHome();
   cache = await tempHome();
-  process.env.GMUX_HOME = home;
+  process.env.GIGAMANAGE_HOME = home;
   process.env.XDG_CACHE_HOME = cache;
-  delete process.env.GMUX_AUTO_SUMMARIZE;
+  delete process.env.GIGAMANAGE_AUTO_SUMMARIZE;
 });
 
 afterEach(async () => {
-  delete process.env.GMUX_HOME;
+  delete process.env.GIGAMANAGE_HOME;
   delete process.env.XDG_CACHE_HOME;
-  delete process.env.GMUX_AUTO_SUMMARIZE;
+  delete process.env.GIGAMANAGE_AUTO_SUMMARIZE;
   await rm(home, { recursive: true, force: true });
   await rm(cache, { recursive: true, force: true });
 });
@@ -118,9 +118,9 @@ function fakeSpawner() {
 
 describe("the feedback-loop guard", () => {
   // THE ONE THAT MATTERS. `claude -p` writes a Claude Code session for every
-  // summary it produces. If those were targets, gmux would summarize its
+  // summary it produces. If those were targets, gm would summarize its
   // own summarizer, whose summaries would create more sessions, forever.
-  it("never targets an automated session — gmux must not summarize its own `claude -p` runs", () => {
+  it("never targets an automated session — gm must not summarize its own `claude -p` runs", () => {
     const records = [
       record({ sessionId: "human", updatedAt: "2026-07-01T00:00:00.000Z" }),
       // These are exactly what our own summarizer leaves behind.
@@ -190,7 +190,7 @@ describe("choosing what to summarize", () => {
 });
 
 describe("the lock", () => {
-  it("stops a second gmux from spawning a second worker", async () => {
+  it("stops a second gm from spawning a second worker", async () => {
     expect(await acquireLock()).toBe(true);
     expect(await acquireLock()).toBe(false);
 
@@ -247,7 +247,7 @@ describe("maybeAutoSummarize", () => {
     expect(notices).toEqual([
       "summarizing 1 session in the background — marked ◐ below",
     ]);
-    // The lock now names the worker, so the next `gmux` backs off.
+    // The lock now names the worker, so the next `gm` backs off.
     expect((await readLock())?.pid).toBe(process.pid);
   });
 
@@ -270,9 +270,9 @@ describe("maybeAutoSummarize", () => {
     expect(spawner.count).toBe(1);
   });
 
-  it("is off when GMUX_AUTO_SUMMARIZE=0, and touches nothing", async () => {
+  it("is off when GIGAMANAGE_AUTO_SUMMARIZE=0, and touches nothing", async () => {
     await seedUnsummarizedSession();
-    process.env.GMUX_AUTO_SUMMARIZE = "0";
+    process.env.GIGAMANAGE_AUTO_SUMMARIZE = "0";
     const spawner = fakeSpawner();
     const notices: string[] = [];
 
@@ -287,8 +287,8 @@ describe("maybeAutoSummarize", () => {
     expect(notices).toEqual([]);
     expect(await readLock()).toBeNull();
 
-    expect(autoSummarizeEnabled({ GMUX_AUTO_SUMMARIZE: "0" })).toBe(false);
-    expect(autoSummarizeEnabled({ GMUX_AUTO_SUMMARIZE: "false" })).toBe(false);
+    expect(autoSummarizeEnabled({ GIGAMANAGE_AUTO_SUMMARIZE: "0" })).toBe(false);
+    expect(autoSummarizeEnabled({ GIGAMANAGE_AUTO_SUMMARIZE: "false" })).toBe(false);
     expect(autoSummarizeEnabled({})).toBe(true);
   });
 
@@ -390,7 +390,7 @@ describe("maybeAutoSummarize", () => {
 
   it("stays off when forced but disabled: a keypress does not override the env var", async () => {
     await seedUnsummarizedSession();
-    process.env.GMUX_AUTO_SUMMARIZE = "0";
+    process.env.GIGAMANAGE_AUTO_SUMMARIZE = "0";
     const spawner = fakeSpawner();
 
     const outcome = await maybeAutoSummarize({
@@ -405,7 +405,7 @@ describe("maybeAutoSummarize", () => {
 });
 
 describe("the background worker", () => {
-  it("writes the summaries and releases the lock, so the next gmux can take it", async () => {
+  it("writes the summaries and releases the lock, so the next gm can take it", async () => {
     await writeClaudeSession(home, {
       slug: "-Users-dev-acme",
       sessionId: "581cb3f8-7a1c-4dd0-a887-5f55f9184619",
@@ -422,7 +422,7 @@ describe("the background worker", () => {
 
     const written = JSON.parse(
       await readFile(
-        `${cache}/gmux/summaries/claude-code-581cb3f8-7a1c-4dd0-a887-5f55f9184619.json`,
+        `${cache}/gigamanage/summaries/claude-code-581cb3f8-7a1c-4dd0-a887-5f55f9184619.json`,
         "utf8",
       ),
     );
@@ -440,8 +440,8 @@ describe("the background worker", () => {
 
 describe("the window follows what you displayed", () => {
   it("summarizes every session shown, not just the default window", async () => {
-    // `gmux ls -n 50` must summarize all fifty. Before this, the window was a
-    // fixed 10 while `gmux ls` showed 20, so half the default view was
+    // `gm ls -n 50` must summarize all fifty. Before this, the window was a
+    // fixed 10 while `gm ls` showed 20, so half the default view was
     // permanently marked "no summary yet" and the feature looked broken.
     const shown = Array.from({ length: 35 }, (_, i) =>
       record({ sessionId: `s${String(i).padStart(3, "0")}`, updatedAt: `2026-07-${String(10 + (i % 20)).padStart(2, "0")}T00:00:00.000Z` }),

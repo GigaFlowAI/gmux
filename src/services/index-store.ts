@@ -1,10 +1,10 @@
 /**
  * The session index.
  *
- * Parsing 1,000+ sessions on every invocation would make `gmux` unusable, so we
+ * Parsing 1,000+ sessions on every invocation would make `gm` unusable, so we
  * cache parsed records keyed on each file's (mtime, size). A file whose stats
  * are unchanged is served from cache; anything else is re-parsed. That keeps a
- * warm `gmux ls` in the millisecond range while staying correct as sessions grow.
+ * warm `gm ls` in the millisecond range while staying correct as sessions grow.
  */
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
@@ -51,7 +51,7 @@ async function saveIndexFile(entries: Map<string, IndexEntry>): Promise<void> {
   const path = indexPath();
   await mkdir(dirname(path), { recursive: true });
   const payload: IndexFile = { version: INDEX_VERSION, entries: [...entries.values()] };
-  // Write-then-rename: a killed `gmux` must never leave a half-written index.
+  // Write-then-rename: a killed `gm` must never leave a half-written index.
   const temp = `${path}.${process.pid}.tmp`;
   await writeFile(temp, JSON.stringify(payload), "utf8");
   await rename(temp, path);

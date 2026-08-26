@@ -1,5 +1,5 @@
 /**
- * The pane→session links `gmux run` records, so the overlay maps a live pane to
+ * The pane→session links `gm run` records, so the overlay maps a live pane to
  * the exact session it launched rather than guessing. Cache, disposable, pruned
  * to the live pane set on every overlay render.
  */
@@ -32,7 +32,7 @@ export async function readPaneLinks(): Promise<PaneLink[]> {
 async function persist(links: readonly PaneLink[]): Promise<void> {
   const path = paneLinksPath();
   await mkdir(dirname(path), { recursive: true });
-  // Write-then-rename: a killed `gmux run` must never leave a half-written pane-links.json.
+  // Write-then-rename: a killed `gm run` must never leave a half-written pane-links.json.
   const temp = `${path}.${process.pid}.tmp`;
   await writeFile(temp, JSON.stringify(links), "utf8");
   await rename(temp, path);
