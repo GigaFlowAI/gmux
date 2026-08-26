@@ -56,7 +56,7 @@ This is real output from gmux's own renderers (`renderCockpit`,
 **The cockpit grid** (`gmux cockpit`, bound to ctrl+g):
 
 ```text
-⚠ host memory 92% — top consumer: window `webshop` (4.3 GB); checkpoint your work and pause non-essential tasks.
+⚠ host memory 92% — top consumer: pane `webshop` (4.3 GB); checkpoint your work and pause non-essential tasks.
 
 gmux — 3 panes
 ○ webshop  idle  [4.3 GB]  10m ago

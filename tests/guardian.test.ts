@@ -8,6 +8,25 @@ const agent = (paneId: string, rss: number): PaneEntry => ({
   state: "working", semantics: null, resources: { perPaneRss: rss, ts: 0 }, lastActivityTs: 0, ts: 0, gone: false,
 });
 const shell = (paneId: string): PaneEntry => ({ ...agent(paneId, 0), identity: { ...agent(paneId, 0).identity, harness: null, sessionId: null } });
+const hogPane = (opts: { tabId: string; paneId: string; rss: number }): PaneEntry => ({
+  identity: {
+    paneId: opts.paneId,
+    windowId: null,
+    active: false,
+    harness: "claude-code",
+    sessionId: "s",
+    cwd: "",
+    command: "node",
+    pid: 1,
+    tabId: opts.tabId,
+  },
+  state: "working",
+  semantics: null,
+  resources: { perPaneRss: opts.rss, ts: 0 },
+  lastActivityTs: 0,
+  ts: 0,
+  gone: false,
+});
 
 describe("Guardian", () => {
   it("broadcasts over threshold with an agent target, naming the culprit", () => {
@@ -15,7 +34,14 @@ describe("Guardian", () => {
     const d = g.decide(host(0.92), [agent("%1", 4_200_000_000)], 0);
     expect(d.action).toBe("broadcast");
     expect(d.culpritPaneId).toBe("%1");
-    expect(d.message).toContain("webshop-build");
+    expect(d.message).not.toMatch(/window `/);
+    expect(d.message).toContain("pane `webshop-build`");
+  });
+  it("names the culprit as a pane/tab, not a tmux window", () => {
+    const g = new Guardian({ policy: "auto", threshold: 0.9, cooldownSeconds: 300 });
+    const d = g.decide(host(0.92), [hogPane({ tabId: "t_web", paneId: "p_1", rss: 4_300_000_000 })], 1_000);
+    expect(d.message).not.toMatch(/window `/);
+    expect(d.message).toMatch(/top consumer:.*web/);
   });
   it("stays quiet during cooldown", () => {
     const g = new Guardian({ policy: "auto", threshold: 0.9, cooldownSeconds: 300 });

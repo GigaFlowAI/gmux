@@ -68,7 +68,7 @@ The guardian is the one component in gmux that **acts** — it types into agent 
 - **Only broadcasts to known agent panes** — never arbitrary shells, since injecting keystrokes where a human is typing would corrupt input.
 - **Cooldown + hysteresis.** It fires once at threshold, then stays quiet for a configured number of minutes; it won't re-fire until pressure drops and re-crosses. No spamming while memory sits high.
 - **No target, no action.** With no agent panes to protect, it logs the pressure and sends nothing.
-- **Names the culprit.** The broadcast/log message includes the top memory consumer, e.g. *"host memory 92% — top consumer: window `webshop-build` (4.2 GB); checkpoint your work and pause non-essential tasks."* When the hog is `unattributed`, it says so honestly rather than guessing.
+- **Names the culprit.** The broadcast/log message includes the top memory consumer, e.g. *"host memory 92% — top consumer: pane `webshop-build` (4.2 GB); checkpoint your work and pause non-essential tasks."* When the hog is `unattributed`, it says so honestly rather than guessing.
 - **Every action is logged** to the model — timestamp, pressure, culprit — and the cockpit shows the log at the top.
 
 ## Memory attribution — read the numbers correctly
