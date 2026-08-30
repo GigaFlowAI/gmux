@@ -2,7 +2,7 @@
 /**
  * Layer check.
  *
- * gm has a strict one-way dependency rule:
+ * gigamanage has a strict one-way dependency rule:
  *
  *     core  ←  adapters  ←  services  ←  cli
  *

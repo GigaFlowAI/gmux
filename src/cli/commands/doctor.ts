@@ -1,5 +1,3 @@
-import { homedir } from "node:os";
-
 import type { Command } from "commander";
 
 import { SCHEMA_VERSION } from "../../core/types.js";
@@ -15,7 +13,6 @@ import { onPath } from "../../services/providers.js";
 import { defaultSummaryProvider } from "../../services/summarize.js";
 import { discover } from "../../services/index-store.js";
 import { supportsDisplayPopup, tmuxVersion } from "../../services/tmux.js";
-import { inspectTmuxBindings, realTmuxFs } from "./tmux.js";
 import { dim, green, jsonEnvelope, red, yellow } from "../format.js";
 
 interface Check {
@@ -34,7 +31,7 @@ interface Check {
 export function registerDoctor(program: Command): void {
   program
     .command("doctor")
-    .description("check what gm can see, and what's missing")
+    .description("check what gigamanage can see, and what's missing")
     .option("--json", "emit JSON for scripts and agents")
     .action(async (options: { json?: boolean }) => {
       const checks: Check[] = [];
@@ -83,29 +80,6 @@ export function registerDoctor(program: Command): void {
           ? {}
           : { fix: tmuxV ? "Upgrade tmux to 3.2 or newer." : "brew install tmux, then `gm tmux install`." }),
       });
-
-      const bindings = inspectTmuxBindings(homedir(), realTmuxFs());
-      const bindingsOk = bindings.installed && !bindings.leftoverLegacy;
-      checks.push({
-        name: "tmux bindings",
-        ok: bindingsOk,
-        optional: true,
-        detail: !bindings.installed
-          ? "not installed — ctrl-g will not open the cockpit"
-          : bindings.leftoverLegacy
-            ? `installed in ${bindings.targetPath} but shadowed by leftover gigamanage bindings`
-            : `installed in ${bindings.targetPath}`,
-        ...(bindingsOk ? {} : { fix: "gm tmux install  (or re-run `gm setup`)" }),
-      });
-      if (bindings.leftoverLegacy) {
-        checks.push({
-          name: "legacy gigamanage tmux bindings",
-          ok: false,
-          optional: true,
-          detail: "old # >>> gigamanage >>> block still present — ctrl-g may open `gm overlay`",
-          fix: "gm tmux install  (migrates the old block) or delete the # >>> gigamanage >>> block from ~/.tmux.conf / ~/.tmux.conf.local",
-        });
-      }
 
       // Config first: it explains every provider answer below it.
       const config = await readConfig();

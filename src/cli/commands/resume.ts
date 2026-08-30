@@ -15,13 +15,13 @@ import { dim } from "../format.js";
  * Hand control to the harness that owns this session.
  *
  * We replace this process rather than wrapping it: the user wants to be *in*
- * Claude Code or Codex, not in a gm shell that proxies keystrokes.
+ * Claude Code or Codex, not in a gigamanage shell that proxies keystrokes.
  */
 export async function resumeSession(record: SessionRecord, dryRun = false): Promise<never | void> {
   const adapter = adapterById(record.harness);
   if (!adapter) {
     throw new GigamanageError(`No adapter is registered for harness "${record.harness}".`, {
-      fix: "This session was indexed by a version of gm that supported more harnesses. Run `gm index --rebuild`.",
+      fix: "This session was indexed by a version of gigamanage that supported more harnesses. Run `gm index --rebuild`.",
     });
   }
 

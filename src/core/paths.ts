@@ -1,5 +1,5 @@
 /**
- * Where gm keeps its own state. It never writes anywhere else.
+ * Where gigamanage keeps its own state. It never writes anywhere else.
  *
  * Two directories and one narrow third category, and the split matters:
  *
@@ -14,16 +14,12 @@
  *   category is named here and in AGENTS.md #1 rather than left as a habit,
  *   because a rule with an unwritten exception is a rule the next person
  *   "fixes".
- *
- * One deliberate exception: `workReportPath()` lives under `tmpdir()`, not
- * either root, because it's a disposable render target overwritten on every
- * report, not gm state.
  */
 
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
-/** Root of gm's config. Honors XDG_CONFIG_HOME. */
+/** Root of gigamanage's config. Honors XDG_CONFIG_HOME. */
 export function configDir(): string {
   const xdg = process.env.XDG_CONFIG_HOME;
   const base = xdg && xdg.trim() !== "" ? xdg : join(homedir(), ".config");
@@ -35,7 +31,7 @@ export function configPath(): string {
   return join(configDir(), "config.json");
 }
 
-/** Root of gm's cache. Honors XDG_CACHE_HOME. */
+/** Root of gigamanage's cache. Honors XDG_CACHE_HOME. */
 export function cacheDir(): string {
   const xdg = process.env.XDG_CACHE_HOME;
   const base = xdg && xdg.trim() !== "" ? xdg : join(homedir(), ".cache");
@@ -54,24 +50,6 @@ export function summaryDir(): string {
 
 export function summaryPath(harness: string, sessionId: string): string {
   return join(summaryDir(), `${harness}-${sessionId}.json`);
-}
-
-/** Directory of generated work-view fragments, one JSON file per session. */
-export function workViewDir(): string {
-  return join(cacheDir(), "work-views");
-}
-
-/** Cached work-view (metadata + HTML fragment) for one session. */
-export function workViewPath(harness: string, sessionId: string): string {
-  return join(workViewDir(), `${harness}-${sessionId}.json`);
-}
-
-/**
- * The assembled work report. One stable file in the temp dir so re-pressing `v`
- * overwrites it and the `file://` link the cockpit shows stays the same.
- */
-export function workReportPath(): string {
-  return join(tmpdir(), "gigamanage-work-report.html");
 }
 
 /**
@@ -115,29 +93,4 @@ export function askTranscriptPath(runId: string): string {
 export function harnessHome(): string {
   const override = process.env.GIGAMANAGE_HOME;
   return override && override.trim() !== "" ? override : homedir();
-}
-
-/** Root of gm's ephemeral daemon state (cache: dies with the tmux server). */
-export function daemonDir(): string {
-  return join(cacheDir(), "daemon");
-}
-
-/** Unix socket surfaces connect to for live model subscription. */
-export function daemonSocketPath(): string {
-  return join(daemonDir(), "daemon.sock");
-}
-
-/** Snapshot file written every tick; the fallback when the daemon is down. */
-export function daemonSnapshotPath(): string {
-  return join(daemonDir(), "snapshot.json");
-}
-
-/** Directory of per-pane pipe-pane logs (non-agent tail). */
-export function paneLogDir(): string {
-  return join(daemonDir(), "panes");
-}
-
-/** One pane's pipe-pane log. `%3` → `pane-3.log` (tmux ids carry a `%`). */
-export function paneLogPath(paneId: string): string {
-  return join(paneLogDir(), `pane-${paneId.replace(/^%/, "")}.log`);
 }

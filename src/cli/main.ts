@@ -18,14 +18,11 @@ import { registerAskCancel } from "./commands/__ask-cancel.js";
 import { registerAskRun } from "./commands/__ask-run.js";
 import { registerAskSend } from "./commands/__ask-send.js";
 import { registerAutoSummarizeWorker } from "./commands/auto.js";
-import { registerCockpit } from "./commands/cockpit.js";
-import { registerDaemon } from "./commands/daemon.js";
 import { registerDoctor } from "./commands/doctor.js";
 import { registerSetup, runSetupWizard } from "./commands/setup.js";
 import { registerGrep } from "./commands/grep.js";
 import { registerIndex } from "./commands/index-cmd.js";
 import { registerLs } from "./commands/ls.js";
-import { registerOrganize } from "./commands/organize.js";
 import { registerOverlay } from "./commands/overlay.js";
 import { registerWatch } from "./commands/watch.js";
 import { registerPick } from "./commands/pick.js";
@@ -128,12 +125,9 @@ registerAskRun(program);
 registerAskCancel(program);
 registerPick(program); // Also the default action when `gm` is run bare.
 registerOverlay(program);
-registerCockpit(program);
 registerTmux(program);
-registerOrganize(program);
 registerRun(program);
 registerWatch(program);
-registerDaemon(program);
 
 async function main(): Promise<void> {
   try {

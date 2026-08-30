@@ -50,7 +50,7 @@ Everything is nullable except `sessionId`, `updatedAt` and the flags. Set what y
 
 **Not every "user" message is a human turn.** Harnesses stuff tool results, system reminders, and slash-command envelopes into user-role records. If you let those through, they become the model's evidence and the summaries turn to mush. See `humanText()` in `claude-code.ts` for the filtering pattern — and apply it uniformly: the same filtered text must go into both `recentUserPrompts` and `arcPrompts`, never raw content into the arc. Use `DecimatingSampler` in `src/adapters/jsonl.ts` to build `arcPrompts` — it keeps the whole session's shape in bounded memory and never drops the first turn.
 
-**Your harness's headless mode creates real sessions.** gm summarizes by shelling out to a model CLI — which, if that CLI is your harness, writes a new session containing gm's own prompt. Set `isAutomated` for non-interactive runs (Claude Code marks them `entrypoint: "sdk-cli"`; Codex marks them `originator: "codex_exec"`) or the tool will pollute its own output.
+**Your harness's headless mode creates real sessions.** gigamanage summarizes by shelling out to a model CLI — which, if that CLI is your harness, writes a new session containing gigamanage's own prompt. Set `isAutomated` for non-interactive runs (Claude Code marks them `entrypoint: "sdk-cli"`; Codex marks them `originator: "codex_exec"`) or the tool will pollute its own output.
 
 ## Testing it
 

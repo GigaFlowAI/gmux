@@ -43,7 +43,7 @@ const run = promisify(execFile);
 
 let dir: string;
 beforeAll(async () => {
-  dir = await mkdtemp(join(tmpdir(), "gm-chat-"));
+  dir = await mkdtemp(join(tmpdir(), "gigamanage-chat-"));
 });
 afterAll(async () => {
   await rm(dir, { recursive: true, force: true });

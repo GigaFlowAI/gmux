@@ -1,5 +1,5 @@
 /**
- * The catalog of model CLIs gm knows how to call.
+ * The catalog of model CLIs gigamanage knows how to call.
  *
  * This is deliberately NOT `adapters/registry.ts`, and the two must not be
  * merged. They are different axes that only coincidentally share names today:

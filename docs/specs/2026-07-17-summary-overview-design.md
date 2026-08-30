@@ -9,7 +9,7 @@ The one-liner in the picker row doesn't tell you what a session is about.
 
 `SessionSummary.headline` is specified as *"One line: the state the work is in now"* (`src/core/types.ts:91`), and the prompt asks for exactly that: `"the state this work is in NOW: one clause, under 60 chars"` (`src/services/distill.ts:96`). The result is a status with no subject. *"Timestamp check never written"* is unreadable next to twenty others when you can't remember which session it belongs to.
 
-That is the same failure mode as Claude Code's own sessions view: a terse one-liner about the latest change, offering no context. gmux exists to be a *browser* of agent sessions — its summaries have to carry enough context to decide what to open. A status clause alone doesn't.
+That is the same failure mode as Claude Code's own sessions view: a terse one-liner about the latest change, offering no context. gigamanage exists to be a *browser* of agent sessions — its summaries have to carry enough context to decide what to open. A status clause alone doesn't.
 
 Two things cause this:
 
@@ -106,9 +106,9 @@ Retained: the "narrow list column / clause, not sentence" guidance with its good
 
 **Validation** (`summarize.ts:98-127`): `headline` stays the *only* hard requirement; `overview` coerces to `""` like `landed` / `open` / `nextStep`. A row must always render, but a provider that flubs one card field shouldn't nuke an otherwise-useful summary.
 
-This gives backward compatibility for free, though not by the mechanism it looks like. `readSummary` (`summarize.ts`) does a bare `JSON.parse(raw) as SessionSummary` — stored summaries are never re-validated through `parseSummaryFields`. So an old file's missing `overview` surfaces as `undefined`, **not** `""`. It renders correctly anyway because every consumer treats it as falsy: the card uses `overview || headline` and `gmux ask` guards with `if (summary.overview)`. Any future consumer must do the same, or handle `undefined` explicitly — passing it straight to a string function would throw. Such summaries regenerate on next touch.
+This gives backward compatibility for free, though not by the mechanism it looks like. `readSummary` (`summarize.ts`) does a bare `JSON.parse(raw) as SessionSummary` — stored summaries are never re-validated through `parseSummaryFields`. So an old file's missing `overview` surfaces as `undefined`, **not** `""`. It renders correctly anyway because every consumer treats it as falsy: the card uses `overview || headline` and `gm ask` guards with `if (summary.overview)`. Any future consumer must do the same, or handle `undefined` explicitly — passing it straight to a string function would throw. Such summaries regenerate on next touch.
 
-**`gmux ask` context** (`ask.ts:82`) feeds `overview` alongside `headline`. That command's entire job is having enough context to answer questions.
+**`gm ask` context** (`ask.ts:82`) feeds `overview` alongside `headline`. That command's entire job is having enough context to answer questions.
 
 ### 3. The card (`cli`)
 
@@ -132,7 +132,7 @@ Old summaries then render `OVERALL` from the old status headline and `RECENT WOR
 
 **`rowText()`** (`format.ts:99-102`) is unchanged. It reads `summary?.headline`; the headline's *meaning* moved, not its position. The `?? record.title ?? record.lastUserPrompt` chain stays.
 
-The fzf preview pane (`picker.ts:196`, window `right,55%,wrap`) renders `gmux show`, so it inherits the new card with no change.
+The fzf preview pane (`picker.ts:196`, window `right,55%,wrap`) renders `gm show`, so it inherits the new card with no change.
 
 ## Testing
 
@@ -150,7 +150,7 @@ Constraints that hold: no test calls a real model (inject `FakeProvider`); no te
 
 ## Cost
 
-Bumping `PROMPT_VERSION` invalidates **every summary on disk**. The next `gmux ls` re-summarizes the recent window (`AUTO_SUMMARIZE_LIMIT = 20`, `auto-summarize.ts:53`); the rest regenerate as they are touched. This is real token spend across the user's history, unavoidable for a schema change of this kind, and one-time. Accepted.
+Bumping `PROMPT_VERSION` invalidates **every summary on disk**. The next `gm ls` re-summarizes the recent window (`AUTO_SUMMARIZE_LIMIT = 20`, `auto-summarize.ts:53`); the rest regenerate as they are touched. This is real token spend across the user's history, unavoidable for a schema change of this kind, and one-time. Accepted.
 
 ## Docs to update
 

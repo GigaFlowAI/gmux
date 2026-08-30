@@ -9,13 +9,10 @@
  */
 
 import { execFile } from "node:child_process";
-import { basename } from "node:path";
 import { promisify } from "node:util";
 
-import type { PaneEntry, PaneState } from "../core/workspace-types.js";
 import type { SessionRecord, SessionView, TmuxPane } from "../core/types.js";
 import { inProgressIds } from "../services/auto-summarize.js";
-import { isDaemonLockStale, readDaemonLock } from "../services/daemon-lock.js";
 import { prunePaneLinks } from "../services/pane-links.js";
 import { listAllPanes, listPanes } from "../services/tmux.js";
 import { resolvePanesLive } from "../services/tmux-resolve.js";
@@ -48,28 +45,6 @@ export function paneLabel(view: SessionView | null, refreshing = false): string 
   if (refreshing) return `${project} — gm summaries loading…`;
   if (!view.summary) return `○ ${project}`;
   return `${project} — ${view.summary.headline}`;
-}
-
-/** Phase 0 state glyph, shown in the daemon-driven border label ahead of the project name. */
-export function stateGlyph(state: PaneState): string {
-  switch (state) {
-    case "working": return "●";
-    case "waiting": return "◔";
-    case "error": return "✗";
-    case "done": return "✓";
-    case "idle": return "○";
-  }
-}
-
-/**
- * The daemon-driven border label for one pane: `<glyph> <project> — <headline>`.
- * Zero sensing — reads only the model entry. Falls back to the pane's command
- * when the cwd is empty, and to the raw state name until semantics arrive.
- */
-export function snapshotLabel(entry: PaneEntry): string {
-  const name = entry.identity.cwd ? basename(entry.identity.cwd) : entry.identity.command;
-  const text = entry.semantics?.label ?? entry.state;
-  return `${stateGlyph(entry.state)} ${name} — ${text}`;
 }
 
 async function tmux(args: string[]): Promise<string> {
@@ -153,22 +128,13 @@ export async function disableBorder(): Promise<void> {
  * paint an immediate first frame for the current window, start the watcher); off
  * when on (stop the watcher, hide the borders). "On" is the service running, not
  * the border option — a theme may set the border for its own reasons.
- *
- * When `gm daemon` is live, it already owns every pane's border (it repaints
- * `@gm_label` on every model change — see `commands/daemon.ts`'s `onChange`).
- * Starting the legacy watcher loop on top of that would fight the daemon for
- * the same option, so turning the watcher ON no-ops with `"daemon-owned"`
- * instead. Turning it off is always safe (there is nothing for the daemon
- * path to interfere with), so that branch is untouched.
  */
-export async function toggleWatch(windowId: string): Promise<"on" | "off" | "daemon-owned"> {
+export async function toggleWatch(windowId: string): Promise<"on" | "off"> {
   if (await isWatchRunning()) {
     await stopWatch();
     await disableBorder();
     return "off";
   }
-  const lock = await readDaemonLock();
-  if (lock && !isDaemonLockStale(lock)) return "daemon-owned";
   await enableBorder();
   await paintLabels(windowId); // instant first paint, before the loop's first tick
   await startWatch();

@@ -5,11 +5,11 @@
 
 ## The problem
 
-`gmux ls` renders `⚠`, `◐` and `○` on its rows and prints a key underneath
-explaining them. The picker — bare `gmux`, the command this whole tool exists to
+`gm ls` renders `⚠`, `◐` and `○` on its rows and prints a key underneath
+explaining them. The picker — bare `gm`, the command this whole tool exists to
 serve — renders the same three markers and explains nothing.
 
-So the markers are legible exactly where you are least likely to need them. `gmux
+So the markers are legible exactly where you are least likely to need them. `gm
 ls` is the command you run when you want a list to read; the picker is the
 command you run when you want to *choose*, and choosing is when "what does `⚠`
 mean" actually matters. The `⚠` flag is the tool's headline feature — sessions
@@ -46,7 +46,7 @@ stops being a correctness question. The cost is one header line on a fully
 summarized list where `○` and `◐` don't appear — cheap, and the price of a key
 that is never wrong.
 
-`gmux ls` keeps its counted, present-only legend unchanged. The asymmetry is
+`gm ls` keeps its counted, present-only legend unchanged. The asymmetry is
 deliberate: `ls` is a snapshot, so its counts are true by construction; the
 picker is live, so it gets the thing that cannot lie.
 
@@ -111,7 +111,7 @@ PATH is a distinction with no meaning to the person reading it.
 
 ## Out of scope
 
-- Changing `gmux ls`'s legend.
+- Changing `gm ls`'s legend.
 - Making the fzf header dynamic via `transform`. It would buy accurate counts at
   the price of fzf-version pressure and a second output channel on
   `__picker-rows`, to restore numbers this design concluded the picker is better

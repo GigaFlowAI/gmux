@@ -1,5 +1,5 @@
 /**
- * The lifecycle of gm's background agent — the `gm watch` service that
+ * The lifecycle of gigamanage's background agent — the `gm watch` service that
  * keeps pane labels and summaries current.
  *
  * A single global instance, tracked by a PID file, in the same spirit as the

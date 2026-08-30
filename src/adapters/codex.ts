@@ -116,10 +116,7 @@ export class CodexAdapter implements HarnessAdapter {
       if (!payload) continue;
 
       if (type === "session_meta") {
-        // Last-wins: a session that `cd`s (e.g. into a worktree) has a later cwd
-        // that reflects where it lives NOW — which is what the live-pane resolver
-        // matches against. Keep the prior value when this entry doesn't carry one.
-        cwd = str(payload["cwd"]) ?? cwd;
+        cwd ??= str(payload["cwd"]);
         // `codex exec` is the non-interactive entrypoint — automation, not a
         // conversation someone sat through.
         if (str(payload["originator"]) === "codex_exec" || str(payload["source"]) === "exec") {
@@ -129,7 +126,7 @@ export class CodexAdapter implements HarnessAdapter {
       }
 
       if (type === "turn_context") {
-        cwd = str(payload["cwd"]) ?? cwd;
+        cwd ??= str(payload["cwd"]);
         continue;
       }
 

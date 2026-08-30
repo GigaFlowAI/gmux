@@ -5,7 +5,7 @@
 
 ## The problem
 
-gmux answers "what was I doing, and what should I pick up?" — but only for
+gigamanage answers "what was I doing, and what should I pick up?" — but only for
 sessions *at rest*, browsed one at a time through the picker. The moment you're
 running several agents at once, each in its own tmux pane, the tool has nothing
 to say. You tab between panes reading scrollback to remember which agent is on
@@ -19,7 +19,7 @@ is thinnest. That's the gap this closes.
 ## What we're building
 
 A **peek overlay** for tmux. Tap `ctrl+g` and every pane in the current window
-is covered, in place, by its own summary card — the same card `gmux show` renders,
+is covered, in place, by its own summary card — the same card `gm show` renders,
 drawn where its pane sits so your spatial map ("webshop is top-left") survives.
 Any key drops it and you're back on the live panes, untouched.
 
@@ -27,9 +27,9 @@ Plus the two things that make it trustworthy: a **resolver** that maps a live
 pane to the right transcript, and a **refresh** that brings stale cards current
 in the background without ever making you wait.
 
-gmux stays what it is — a read-only intelligence layer. tmux stays the
+gigamanage stays what it is — a read-only intelligence layer. tmux stays the
 multiplexer. This is a new *consumer* of the existing session/summary engine,
-not a change to it. If tmux isn't installed, none of this loads and `gmux` is
+not a change to it. If tmux isn't installed, none of this loads and `gm` is
 exactly as it was.
 
 ## Design principles carried in from the rest of the tool
@@ -41,7 +41,7 @@ exactly as it was.
   existing index instantly. Model calls (refresh) happen in the background and
   only for cards past a staleness threshold.
 - **The layer rule holds.** `core ← adapters ← services ← cli`. tmux I/O and the
-  resolver live in `services`; the overlay, the per-pane card, and `gmux run` are
+  resolver live in `services`; the overlay, the per-pane card, and `gm run` are
   `cli`.
 
 ## 1. The peek gesture
@@ -50,11 +50,11 @@ exactly as it was.
 popup bound directly to `display-popup`:
 
 ```
-bind -n C-g display-popup -w 100% -h 100% -x 0 -y 0 -B -E 'gmux overlay #{window_id}'
+bind -n C-g display-popup -w 100% -h 100% -x 0 -y 0 -B -E 'gm overlay #{window_id}'
 ```
 
 tmux expands `#{window_id}` to the active window at the moment the key fires, and
-passes it to `gmux overlay` so the popup — which has no pane of its own — knows
+passes it to `gm overlay` so the popup — which has no pane of its own — knows
 which window's layout to draw. Binding `display-popup` directly (rather than
 hopping through `run-shell`) keeps it a single client command.
 
@@ -70,7 +70,7 @@ is strictly better for the gesture we chose:
 - **Zero risk to running agents.** Nothing in your real layout is created or
   destroyed. A crash in the overlay closes a popup; it cannot disturb an agent.
 
-**Cost:** `display-popup` needs tmux ≥ 3.2 (mid-2021). `gmux doctor` gains a check
+**Cost:** `display-popup` needs tmux ≥ 3.2 (mid-2021). `gm doctor` gains a check
 for the tmux version and reports the overlay as unavailable below it, the same
 way it already reports missing `fzf`/`ripgrep`.
 
@@ -83,7 +83,7 @@ portable. So a literal "let go to hide" can't be built on portable bindings.
 and works identically in every terminal. (A fragile hold-to-peek mode driven by
 keyboard auto-repeat is noted under Non-goals as a possible later addition.)
 
-## 2. Rendering the overlay: `gmux overlay <window>`
+## 2. Rendering the overlay: `gm overlay <window>`
 
 A new `cli` command. Given a tmux window id, it:
 
@@ -92,7 +92,7 @@ A new `cli` command. Given a tmux window id, it:
    #{pane_current_command}'`. Each pane is a rectangle in the terminal grid.
 2. **Resolves each pane to a session** (§3).
 3. **Draws a card into each rectangle** using absolute cursor positioning,
-   reusing the card body that `gmux show` already produces — about / landed / open
+   reusing the card body that `gm show` already produces — about / landed / open
    / next, the `⚠` mid-task flag — reflowed to the rectangle's width and height,
    with a freshness line at the bottom (`4s ago` / `2m ago ↻` / `refreshing…`).
 4. **Degrades gracefully.** A rectangle too small for the full card drops to
@@ -103,9 +103,9 @@ A new `cli` command. Given a tmux window id, it:
    refresh (§4) has completed. The first keypress ends the process; the popup
    closes.
 
-The card-body reflow is shared with `gmux show`, not reimplemented. If `gmux show`'s
+The card-body reflow is shared with `gm show`, not reimplemented. If `gm show`'s
 card is currently assembled inside its command, that assembly moves to a
-`services`/`cli-format` helper both call, so the overlay and `gmux show` can never
+`services`/`cli-format` helper both call, so the overlay and `gm show` can never
 drift.
 
 ## 3. The resolver: pane → session
@@ -113,7 +113,7 @@ drift.
 A new `services/tmux-resolve.ts` (may import `core` and `adapters`; matches the
 layer rule). For each pane it returns a `SessionRecord` or `null`, **hybrid**:
 
-1. **Explicit link first.** If the pane was started via `gmux run` (§5), a
+1. **Explicit link first.** If the pane was started via `gm run` (§5), a
    `pane_id → session_id` entry exists in the link store; use it directly. Exact,
    no guessing.
 2. **Heuristic fallback.** Otherwise, take the pane's `pane_current_command`
@@ -124,13 +124,13 @@ layer rule). For each pane it returns a `SessionRecord` or `null`, **hybrid**:
    a normal, expected case, not an error.
 
 The heuristic's one ambiguity — two sessions sharing a cwd and harness — resolves
-to the most recent, which is nearly always the running one. `gmux run` exists
+to the most recent, which is nearly always the running one. `gm run` exists
 precisely for when "nearly always" isn't good enough.
 
 ## 4. Freshness and background refresh
 
 On peek, cards render from the index immediately; nothing blocks on a model. In
-parallel, `gmux overlay` asks the existing summarize path to refresh any
+parallel, `gm overlay` asks the existing summarize path to refresh any
 resolved session whose summary is older than a threshold (reuse
 `auto-summarize`'s staleness notion; a live transcript that has grown since its
 last summary is stale by the existing hash rule). As each refresh lands, that
@@ -141,13 +141,13 @@ overlay adds no new summarization logic, only a new trigger for it. Concurrency
 is bounded by the existing `services/concurrency` limiter, so peeking at a
 twelve-pane window doesn't fan out twelve model calls at once.
 
-## 5. `gmux run <harness> [args…]` — exact mapping, opt-in
+## 5. `gm run <harness> [args…]` — exact mapping, opt-in
 
 A thin `cli` wrapper you start an agent pane with:
 
 ```bash
-gmux run claude          # instead of: claude
-gmux run codex resume    # args pass straight through
+gm run claude          # instead of: claude
+gm run codex resume    # args pass straight through
 ```
 
 It resolves the session id the harness is about to use (or, where the harness
@@ -159,7 +159,7 @@ only upgrades accuracy for panes you opt in.
 
 **Link store placement.** Pane links are ephemeral runtime state — a `pane_id`
 means nothing once the tmux server dies. They go under
-`~/.cache/gmux/pane-links.json`, safe to delete (worst case: a pane falls
+`~/.cache/gigamanage/pane-links.json`, safe to delete (worst case: a pane falls
 back to the heuristic). Entries for pane ids tmux no longer lists are pruned on
 read. This is neither config (nothing a human typed) nor a content-hashed cache,
 but it belongs on the cache side of the config/cache split: derived, disposable,
@@ -167,20 +167,20 @@ regenerated by living in the tool.
 
 ## 6. Keybindings, install, and the picker bridge
 
-- **`gmux tmux install`** writes an idempotent, clearly-fenced block into
+- **`gm tmux install`** writes an idempotent, clearly-fenced block into
   `~/.tmux.conf`:
 
   ```
-  # >>> gmux >>>
-  bind -n C-g run-shell 'gmux overlay'
-  bind -n C-S-g display-popup -w 80% -h 80% -E 'gmux pick'
-  # <<< gmux <<<
+  # >>> gigamanage >>>
+  bind -n C-g run-shell 'gm overlay'
+  bind -n C-S-g display-popup -w 80% -h 80% -E 'gm pick'
+  # <<< gigamanage <<<
   ```
 
-  Re-running replaces the block in place; `gmux tmux uninstall` removes exactly
+  Re-running replaces the block in place; `gm tmux uninstall` removes exactly
   that block and nothing else. The chosen keys are shown so a user with a `C-g`
   conflict can rebind.
-- **The picker bridge.** `ctrl+shift+g` opens the existing picker (`gmux pick`) in
+- **The picker bridge.** `ctrl+shift+g` opens the existing picker (`gm pick`) in
   a tmux popup. Its Enter already resumes a session; inside tmux that resume
   lands in a **new pane** in the current window, so browsing history → a live
   agent is one motion. History and live share one model; this is the seam
@@ -188,8 +188,8 @@ regenerated by living in the tool.
 
 ## Scope
 
-**In v1:** the peek overlay (`gmux overlay`), the resolver (hybrid), background
-refresh, `gmux run`, `gmux tmux install`/`uninstall`, the `gmux doctor` tmux-version
+**In v1:** the peek overlay (`gm overlay`), the resolver (hybrid), background
+refresh, `gm run`, `gm tmux install`/`uninstall`, the `gm doctor` tmux-version
 check, and the picker-in-popup bridge.
 
 ## Non-goals (deliberately later)
@@ -202,7 +202,7 @@ check, and the picker-in-popup bridge.
 - **Remote / cross-machine** panes.
 - **Mouse interaction** inside the overlay (click a card to jump to its pane).
 - **Becoming a multiplexer.** tmux owns panes, layout, and persistence,
-  permanently. gmux is the intelligence on top.
+  permanently. gm is the intelligence on top.
 
 ## Testing
 
@@ -211,12 +211,12 @@ check, and the picker-in-popup bridge.
   most-recent; non-agent pane → `null`. No tmux process needed.
 - **Card reflow** is tested at several rectangle sizes for the full →
   title+landed → title-only → placeholder degradation ladder, against the same
-  fixtures `gmux show` uses.
+  fixtures `gm show` uses.
 - **Link store** round-trips writes and prunes ids absent from a supplied pane
   list.
 - **Layer check** (`scripts/check-layers.mjs`) keeps tmux I/O and the resolver in
-  `services`, the overlay/card/`gmux run` in `cli`.
+  `services`, the overlay/card/`gm run` in `cli`.
 - **tmux itself is not unit-tested** — the geometry read and popup launch are thin
   shells over documented tmux flags, exercised by hand and guarded by the
-  `gmux doctor` version check. What's testable (resolution, reflow, link store) is
+  `gm doctor` version check. What's testable (resolution, reflow, link store) is
   pure and covered.

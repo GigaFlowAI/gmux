@@ -134,51 +134,6 @@ describe("ClaudeCodeAdapter", () => {
     expect(projectName("/Users/dev/Projects/acme")).toBe("acme");
     expect(projectName(null)).toBeNull();
   });
-
-  it("records the LATEST cwd/gitBranch, not the first, for a session that moved directories", async () => {
-    // A session that starts in the main repo, then `cd`s into a git worktree.
-    // The transcript literally contains both cwds in order.
-    const early = { sessionId: CLAUDE_ID, cwd: "/Users/dev/Projects/acme", gitBranch: "main", version: "2.0" };
-    const later = {
-      sessionId: CLAUDE_ID,
-      cwd: "/Users/dev/Projects/acme/.claude/worktrees/fix-auth",
-      gitBranch: "fix-auth",
-      version: "2.0",
-    };
-    const lines = [
-      {
-        ...early,
-        type: "user",
-        timestamp: "2026-07-10T10:00:00.000Z",
-        message: { role: "user", content: "start here" },
-      },
-      {
-        ...early,
-        type: "assistant",
-        timestamp: "2026-07-10T10:01:00.000Z",
-        message: { role: "assistant", content: [{ type: "text", text: "ok" }] },
-      },
-      {
-        ...later,
-        type: "user",
-        timestamp: "2026-07-10T10:02:00.000Z",
-        message: { role: "user", content: "now in the worktree" },
-      },
-      {
-        ...later,
-        type: "assistant",
-        timestamp: "2026-07-10T10:03:00.000Z",
-        message: { role: "assistant", content: [{ type: "text", text: "sure" }] },
-      },
-    ];
-    await writeClaudeSession(home, { slug: "-Users-dev-Projects-acme", sessionId: CLAUDE_ID, lines });
-
-    const adapter = new ClaudeCodeAdapter();
-    const record = await adapter.parseSession((await adapter.listSessions())[0]!);
-
-    expect(record.cwd).toBe("/Users/dev/Projects/acme/.claude/worktrees/fix-auth");
-    expect(record.gitBranch).toBe("fix-auth");
-  });
 });
 
 describe("CodexAdapter", () => {
@@ -247,39 +202,6 @@ describe("CodexAdapter", () => {
 
     expect(command.command).toBe("codex");
     expect(command.args).toEqual(["resume", CODEX_ID]);
-  });
-
-  it("records the LATEST cwd, not the first, for a session that moved directories", async () => {
-    // session_meta carries the starting cwd; a later turn_context reflects a `cd`
-    // into a worktree. The live pane's cwd is the latter, so that's what must win.
-    const lines = [
-      {
-        type: "session_meta",
-        timestamp: "2026-07-11T10:00:00.000Z",
-        payload: { id: CODEX_ID, cwd: "/Users/dev/Projects/beta", originator: "codex_cli" },
-      },
-      {
-        type: "event_msg",
-        timestamp: "2026-07-11T10:00:01.000Z",
-        payload: { type: "user_message", message: "start here" },
-      },
-      {
-        type: "turn_context",
-        timestamp: "2026-07-11T10:00:02.000Z",
-        payload: { cwd: "/Users/dev/Projects/beta/.claude/worktrees/fix-parser" },
-      },
-      {
-        type: "event_msg",
-        timestamp: "2026-07-11T10:00:03.000Z",
-        payload: { type: "user_message", message: "now in the worktree" },
-      },
-    ];
-    await writeCodexSession(home, { date: "2026-07-11", sessionId: CODEX_ID, lines });
-
-    const adapter = new CodexAdapter();
-    const record = await adapter.parseSession((await adapter.listSessions())[0]!);
-
-    expect(record.cwd).toBe("/Users/dev/Projects/beta/.claude/worktrees/fix-parser");
   });
 
   it("reads changed files out of an apply_patch payload", () => {

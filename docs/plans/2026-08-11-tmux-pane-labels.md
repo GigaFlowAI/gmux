@@ -4,7 +4,7 @@
 
 **Goal:** Resolve a tmux pane to its exact session via the agent process's argv/cwd, show each session's headline on its pane border via a toggle, and remove the popup's first-paint lag. Ships v0.8.0.
 
-**Architecture:** `services/pane-process.ts` reads the pane's process tree (pure parse + thin `pgrep`/`ps`/`lsof` glue). `services/tmux-resolve.ts` gains a process hint as its highest heuristic and an async `resolvePanesLive`. `cli` gains `paneLabel` and `gmux tmux label`, plus the install binding; the overlay command consumes `resolvePanesLive` and serves its first paint from the cached index.
+**Architecture:** `services/pane-process.ts` reads the pane's process tree (pure parse + thin `pgrep`/`ps`/`lsof` glue). `services/tmux-resolve.ts` gains a process hint as its highest heuristic and an async `resolvePanesLive`. `cli` gains `paneLabel` and `gm tmux label`, plus the install binding; the overlay command consumes `resolvePanesLive` and serves its first paint from the cached index.
 
 ## Global Constraints
 - Layer rule `core ← adapters ← services ← cli` (enforced). `pane-process` + resolver in `services`; label/command/binding in `cli`.
@@ -51,20 +51,20 @@
 - [ ] Run → fail; implement; run → pass; `npm run check`.
 - [ ] Commit `feat(tmux): resolve panes by agent argv/cwd first`.
 
-## Task 4: `paneLabel` + `gmux tmux label` toggle
+## Task 4: `paneLabel` + `gm tmux label` toggle
 **Files:** `src/cli/tmux-label.ts` (or in `commands/tmux.ts`); `src/cli/commands/tmux.ts` register; tests for `paneLabel`.
 **Produces:**
 - `paneLabel(view: SessionView | null, width?: number): string` — `"project — headline"`; `"○ project"` when resolved but unsummarised; `""` when null; clipped.
-- `gmux tmux label <window>` — toggle: read `pane-border-status`; if off → `resolvePanesLive` for the window's panes, `select-pane -T` each title, then set `pane-border-status top` + `pane-border-format`; if on → set `pane-border-status off`.
+- `gm tmux label <window>` — toggle: read `pane-border-status`; if off → `resolvePanesLive` for the window's panes, `select-pane -T` each title, then set `pane-border-status top` + `pane-border-format`; if on → set `pane-border-status off`.
 
 - [ ] Test `paneLabel` (three shapes + clip).
 - [ ] Implement + register in `main.ts`.
 - [ ] `npm run check` + `npm run build`; hand-verify the toggle on a live server.
-- [ ] Commit `feat(tmux): gmux tmux label toggles pane-border headlines`.
+- [ ] Commit `feat(tmux): gm tmux label toggles pane-border headlines`.
 
 ## Task 5: install binding
 **Files:** `src/cli/commands/tmux.ts` `bindingsBlock`; `tests/tmux-install.test.ts`.
-- [ ] Add `bind -n M-g run-shell "gmux tmux label \"$(tmux display -p '#{window_id}')\""` to the block, with a comment; assert it in the test (and that it resolves the window id in-shell).
+- [ ] Add `bind -n M-g run-shell "gm tmux label \"$(tmux display -p '#{window_id}')\""` to the block, with a comment; assert it in the test (and that it resolves the window id in-shell).
 - [ ] Run → pass; `npm run check`.
 - [ ] Commit `feat(tmux): install the pane-label toggle binding`.
 

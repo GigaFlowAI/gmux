@@ -1,11 +1,11 @@
-# gmux as a background agent
+# gigamanage as a background agent
 
 **Date:** 2026-08-11
 **Status:** proposed — awaiting review
 
 ## The principle
 
-gmux is a **background agent that keeps you up to date on your agents'
+gigamanage is a **background agent that keeps you up to date on your agents'
 latest work.** Everything else is a surface for that. You have several coding
 agents running in tmux; you should be able to glance and know what each has
 gotten to — without switching into them, without running a command, and without
@@ -20,7 +20,7 @@ and a cheap way to decide *when* a summary is worth refreshing.
 
 ## What we're building
 
-**A single background watch service** (`gmux watch`), toggled by `Alt-g`, that every
+**A single background watch service** (`gm watch`), toggled by `Alt-g`, that every
 few seconds resolves the agent panes across all windows, keeps their border
 labels current from cache, and — gated by a cheap divergence check — refreshes
 the summaries of sessions that have actually progressed. It is designed to sit
@@ -66,7 +66,7 @@ the session grows. On each check, recompute the current SimHash and take the
     are exactly the small-but-important flips a volume-based divergence check
     would miss;
   - otherwise, `hammingDistance(summary.fingerprint, current) ≥ THRESHOLD`.
-- `THRESHOLD` is a constant, overridable by `GMUX_REFRESH_DISTANCE`, so it
+- `THRESHOLD` is a constant, overridable by `GIGAMANAGE_REFRESH_DISTANCE`, so it
   can be calibrated against real sessions. Default chosen conservative (refresh on
   real progress, not chatter).
 
@@ -80,16 +80,16 @@ the distance would otherwise sleep through.
 
 ## 2. The watch service
 
-**`gmux watch`** — a single global background service.
+**`gm watch`** — a single global background service.
 
-- **Single instance.** A PID file (`~/.cache/gmux/watch.pid`, `{pid,
+- **Single instance.** A PID file (`~/.cache/gigamanage/watch.pid`, `{pid,
   startedAt}`) makes "already running?" a `process.kill(pid, 0)` check. Starting
   when one is alive is a no-op; a stale PID (dead owner, or older than a ceiling)
   is reclaimed — the same discipline as the auto-summarize lock.
 - **The loop**, every `WATCH_INTERVAL_MS` (default 3000):
   1. `listPanes` across all windows (`list-panes -a`). If tmux is gone, exit.
   2. Resolve each pane (the live process resolver), and set every pane's
-     `@gmux_label` from its cached summary — cheap, no model calls.
+     `@gm_label` from its cached summary — cheap, no model calls.
   3. Collect the resolved sessions whose summary `shouldRefresh` (the SimHash
      gate). Hand them to the existing detached summarise path — through the same
      lock, so nothing stampedes — capped by the existing per-pass ceiling.
@@ -97,7 +97,7 @@ the distance would otherwise sleep through.
 
   A pane whose session is being summarised *right now* (it's in the
   auto-summarize queue, the same `inProgressIds` set the overlay reads) shows
-  **`<project> — gmux summaries loading…`** instead of a stale headline, so the wait
+  **`<project> — gm summaries loading…`** instead of a stale headline, so the wait
   is visible rather than silent. This is a light touch: `paneLabel` gains a
   `refreshing` flag, and the watch loop passes it from the in-progress set on each
   iteration — the label flips to loading when a refresh starts and back to the
@@ -106,11 +106,11 @@ the distance would otherwise sleep through.
   or a terminating signal. Wraps every iteration so one bad read never kills the
   loop.
 
-**`Alt-g` becomes the toggle** (`gmux tmux label <window>`, kept as the binding
+**`Alt-g` becomes the toggle** (`gm tmux label <window>`, kept as the binding
 entry point but now service-aware). Because the service is global, the border is
 enabled **globally** (`set -g pane-border-status top`) so *every* window shows its
 labels, not only the one you toggled from:
-- **Off → On:** set `pane-border-status`/`format` globally, spawn `gmux watch`
+- **Off → On:** set `pane-border-status`/`format` globally, spawn `gm watch`
   detached if not already running, and paint an immediate first frame for the
   current window so labels appear at once (not after the first loop).
 - **On → Off:** stop the service (remove the PID file; signal the process), set
@@ -118,25 +118,25 @@ labels, not only the one you toggled from:
 - "On" is defined by the service running; the toggle reads the PID file, not the
   border option (a theme could set the border for its own reasons).
 
-**`gmux watch --stop`** stops it from the CLI; `gmux watch` in the foreground (no
+**`gm watch --stop`** stops it from the CLI; `gm watch` in the foreground (no
 detach) is available for debugging.
 
 The label-setting from Task-4's `toggleLabels` moves into a shared helper both the
 toggle's first paint and the loop call, so there is one place that turns resolved
-panes into `@gmux_label` values.
+panes into `@gm_label` values.
 
 ## Surfaces, now and later
 
 The **only surface in this spec is the tmux border labels.** But the service is
 the foundation for more, and the design keeps them cheap to add later
 (explicitly out of scope here): a desktop/terminal **notification** when a session
-flips to `endedMidTask` or a command fails; a `gmux feed` that streams "what just
+flips to `endedMidTask` or a command fails; a `gm feed` that streams "what just
 changed"; the `ctrl-g` popup reading the same freshly-maintained cache. The watch
 loop is where that intelligence will live.
 
 ## Scope
 
-**In v0.9.0:** the SimHash gate, `gmux watch` (single-instance global service with a
+**In v0.9.0:** the SimHash gate, `gm watch` (single-instance global service with a
 clean lifecycle), and `Alt-g` toggling it with an immediate first paint.
 
 ## Non-goals (deliberately later)
@@ -160,9 +160,9 @@ clean lifecycle), and `Alt-g` toggling it with an immediate first paint.
   a new `lastToolFailure` / `endedMidTask` flip / changed files → true even at
   distance 0; below threshold with none of those → false; at/over threshold →
   true. Threshold read from the env override in a test.
-- **The label helper** — resolved panes → `@gmux_label` values (already covered by
+- **The label helper** — resolved panes → `@gm_label` values (already covered by
   `paneLabel`; extend for the map, and for the `refreshing` state that renders
-  `<project> — gmux summaries loading…`).
+  `<project> — gm summaries loading…`).
 - **PID-file single-instance logic** — start when free; no-op when a live PID
   exists; reclaim a stale/dead PID. The same shape as the auto-summarize lock
   tests, and tested the same way (no real fork).

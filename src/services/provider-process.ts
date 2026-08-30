@@ -134,7 +134,7 @@ export async function runProviderCommand(
 
     // EPIPE: a provider that exits before reading its prompt would otherwise
     // take the whole process down with an unhandled error event, turning a
-    // provider bug into a gm crash.
+    // provider bug into a gigamanage crash.
     child.stdin.on("error", () => {});
     child.stdin.write(prompt);
     child.stdin.end();

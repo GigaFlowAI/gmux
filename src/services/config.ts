@@ -1,5 +1,5 @@
 /**
- * Config: the one thing gm remembers because a human said so.
+ * Config: the one thing gigamanage remembers because a human said so.
  *
  * Everything else in `~/.cache/gigamanage` is derived and disposable. This
  * isn't, which is why it lives under the config dir instead — see core/paths.ts.
@@ -19,7 +19,6 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { configPath } from "../core/paths.js";
-import { DEFAULT_GIGAMANAGE_CONFIG, type GuardianPolicy, type GigamanageConfig } from "../core/workspace-types.js";
 import { CONFIG_VERSION, type GmConfig, type ProviderChoice } from "../core/types.js";
 import { askArgvFor, firstDetected, summaryArgvFor, type ProviderSpec } from "./providers.js";
 
@@ -95,61 +94,7 @@ export function parseConfig(raw: string): GmConfig | null {
     if (!provider) return null;
   }
 
-  // The gigamanage block is newer than the rest of GmConfig, so its absence —
-  // or a partial block from a version that wrote fewer fields — must not
-  // untrust the whole file. Accept `gmux` as a one-release read alias.
-  const gigamanage = parseGigamanageBlock(
-    object["gigamanage"] ?? object["gmux"] ?? object["gm"],
-  );
-
-  return {
-    version,
-    provider,
-    autoSummarize: object["autoSummarize"],
-    ...(gigamanage ? { gigamanage } : {}),
-  };
-}
-
-/**
- * Parse the gm block leniently: field-by-field, keeping whatever is
- * well-typed and dropping the rest — never the whole block, and never the
- * config it lives in. `resolveGigamanageConfig` is what turns this partial result
- * into a complete `GigamanageConfig`.
- */
-function parseGigamanageBlock(value: unknown): GigamanageConfig | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const object = value as Record<string, unknown>;
-  const result: Partial<GigamanageConfig> = {};
-  if (object["guardianPolicy"] === "off" || object["guardianPolicy"] === "notify" || object["guardianPolicy"] === "auto") {
-    result.guardianPolicy = object["guardianPolicy"];
-  }
-  if (typeof object["memoryThreshold"] === "number") result.memoryThreshold = object["memoryThreshold"];
-  if (typeof object["cooldownSeconds"] === "number") result.cooldownSeconds = object["cooldownSeconds"];
-  if (typeof object["tickMs"] === "number") result.tickMs = object["tickMs"];
-  if (Object.keys(result).length === 0) return undefined;
-  return result as GigamanageConfig;
-}
-
-/**
- * Fill in whatever a stored `gigamanage` block leaves out, from `DEFAULT_GIGAMANAGE_CONFIG`.
- *
- * Never fails on a missing or partial block — older configs have none at all,
- * and `parseGigamanageBlock` above only ever keeps well-typed fields, so what
- * reaches here is trustworthy as far as it goes.
- */
-export function resolveGigamanageConfig(config: GmConfig | null): GigamanageConfig {
-  const g = config?.gigamanage;
-  if (!g) return { ...DEFAULT_GIGAMANAGE_CONFIG };
-  const policy: GuardianPolicy =
-    g.guardianPolicy === "off" || g.guardianPolicy === "notify" || g.guardianPolicy === "auto"
-      ? g.guardianPolicy
-      : DEFAULT_GIGAMANAGE_CONFIG.guardianPolicy;
-  return {
-    guardianPolicy: policy,
-    memoryThreshold: typeof g.memoryThreshold === "number" ? g.memoryThreshold : DEFAULT_GIGAMANAGE_CONFIG.memoryThreshold,
-    cooldownSeconds: typeof g.cooldownSeconds === "number" ? g.cooldownSeconds : DEFAULT_GIGAMANAGE_CONFIG.cooldownSeconds,
-    tickMs: typeof g.tickMs === "number" ? g.tickMs : DEFAULT_GIGAMANAGE_CONFIG.tickMs,
-  };
+  return { version, provider, autoSummarize: object["autoSummarize"] };
 }
 
 /**

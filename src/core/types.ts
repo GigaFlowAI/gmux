@@ -1,5 +1,5 @@
 /**
- * The shared vocabulary of gm. Every layer speaks these types.
+ * The shared vocabulary of gigamanage. Every layer speaks these types.
  *
  * `core` imports nothing internal — see docs/architecture.md for the layer rule.
  */
@@ -22,7 +22,7 @@ export interface SessionRef {
 }
 
 /**
- * One tmux pane as gm sees it: geometry plus enough to resolve it to a
+ * One tmux pane as gigamanage sees it: geometry plus enough to resolve it to a
  * session. `command` is `pane_current_command` (the foreground process, e.g.
  * "claude", "codex", "node", "zsh") — a weak signal, since a node-based harness
  * often shows as "node"; the cwd carries most of the resolution.
@@ -37,10 +37,6 @@ export interface TmuxPane {
   command: string;
   /** The pane's shell pid — the root for resolving which agent runs in it. */
   pid: number;
-  /** tmux window id (`@N`), or null on tmux builds that omit it. */
-  windowId: string | null;
-  /** True when this is the active pane in its window. */
-  active: boolean;
 }
 
 /**
@@ -110,7 +106,7 @@ export interface SessionRecord {
   /**
    * A non-interactive run (`claude -p`, `codex exec`) rather than a conversation
    * someone sat through. Hidden by default: these are automation, not work you
-   * would context-switch back into — and gm's own summarizer creates
+   * would context-switch back into — and gigamanage's own summarizer creates
    * them, so listing them would make the tool pollute its own output.
    */
   isAutomated: boolean;
@@ -203,10 +199,10 @@ export interface SummaryFields {
 }
 
 /**
- * A model CLI gm may call.
+ * A model CLI gigamanage may call.
  *
  * `command` is argv for a one-shot call: prompt on stdin, text on stdout. That
- * is the whole contract, and it is why gm depends on no vendor SDK.
+ * is the whole contract, and it is why gigamanage depends on no vendor SDK.
  */
 export interface ProviderChoice {
   /** Catalog id ("claude-code", "codex"), or "custom" for a hand-written command. */
@@ -233,8 +229,6 @@ export interface GmConfig {
   provider: ProviderChoice | null;
   /** Keep the recent window summarized in the background. */
   autoSummarize: boolean;
-  /** Daemon + guardian settings. Absent on configs written before this block existed. */
-  gigamanage?: import("./workspace-types.js").GigamanageConfig;
 }
 
 /** One exchange in an `gm ask` conversation. */

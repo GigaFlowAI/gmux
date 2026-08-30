@@ -8,7 +8,7 @@
  * may run `gm grep '<query>' --json`, and the provider is invoked with exactly
  * that permission (see providers.ts `askArgv`). We parse no tool calls and speak
  * no vendor protocol — the abstraction stays "a CLI that reads a prompt and
- * writes text", which is the only reason gm depends on no vendor SDK.
+ * writes text", which is the only reason gigamanage depends on no vendor SDK.
  *
  * The cost is that we don't meter how many greps the model runs. Accepted: grep
  * is read-only and cheap, and the provider's own turn limit bounds it.

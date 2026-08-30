@@ -146,11 +146,8 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
         startedAt ??= timestamp;
         updatedAt = timestamp;
       }
-      // Last-wins: a session that `cd`s (e.g. into a worktree) has a later cwd
-      // that reflects where it lives NOW — which is what the live-pane resolver
-      // matches against. Keep the prior value when this entry doesn't carry one.
-      cwd = str(entry["cwd"]) ?? cwd;
-      gitBranch = str(entry["gitBranch"]) ?? gitBranch;
+      cwd ??= str(entry["cwd"]);
+      gitBranch ??= str(entry["gitBranch"]);
       if (entry["isSidechain"] === true) isSidechain = true;
       // `sdk-cli` / `sdk` mark a headless `claude -p` run rather than a
       // conversation someone actually had.

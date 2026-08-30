@@ -2,7 +2,7 @@
  * Read which session a tmux pane is running from the pane's own process tree.
  *
  * The agent process carries the session id in its command line — `codex resume
- * <id>`, `claude --resume <id>` — and both ids are exactly gm's session
+ * <id>`, `claude --resume <id>` — and both ids are exactly gigamanage's session
  * id. That is a far stronger signal than the pane's working directory, which is
  * the *shell's* cwd (usually `~`), not the agent's. Where the argv has no id (a
  * fresh session), the agent process's real cwd stands in.
