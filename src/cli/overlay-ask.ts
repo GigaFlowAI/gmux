@@ -11,14 +11,12 @@ const LABEL = "ask · Enter send · ^R refresh · ^G/Esc close";
 /**
  * The three lines of the ask box (top border, the input line, bottom border),
  * each clipped to `width`. A long input scrolls so its tail stays visible.
- * `label` overrides the border caption (the cockpit's box does ask AND
- * organize, so it names both); the overlay keeps the default.
  */
-export function askBoxLines(input: string, width: number, label: string = LABEL): string[] {
+export function askBoxLines(input: string, width: number): string[] {
   const w = Math.max(12, Math.floor(width));
   const inner = w - 2; // between the │ │ borders
-  const dashes = Math.max(0, inner - label.length - 3);
-  const top = `╭─ ${label} ${"─".repeat(dashes)}╮`.slice(0, w);
+  const dashes = Math.max(0, inner - LABEL.length - 3);
+  const top = `╭─ ${LABEL} ${"─".repeat(dashes)}╮`.slice(0, w);
 
   const field = inner - 2; // inside "│ … │"
   const prompt = `> ${input}`;

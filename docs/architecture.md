@@ -46,7 +46,7 @@ Steps 1–3 are free and always run. Steps 4–5 cost money and only run when yo
 
 ## Why summaries read the arc
 
-Claude Code writes an `aiTitle` in a session's first seconds and never revises it. In a long session it names the opening prompt — precisely the wrong thing when you're deciding what to resume. gm exists to fix that.
+Claude Code writes an `aiTitle` in a session's first seconds and never revises it. In a long session it names the opening prompt — precisely the wrong thing when you're deciding what to resume. gigamanage exists to fix that.
 
 The first fix was to read only the **end** of the session. That overcorrected: a status with no subject ("timestamp check still red") tells you nothing when you cannot remember which session it belongs to. So `distill()` sends the **arc** — the original ask, waypoints sampled across the session, the recent human turns, the final assistant message, files touched, the last failure. The head is in the prompt; it never speaks alone, and the recorded title is always labelled stale.
 
@@ -62,7 +62,7 @@ Writes go through a temp file and a rename, so a killed process can't leave a ha
 
 Cached at `~/.cache/gigamanage/summaries/<harness>-<id>.json`, keyed by a hash of the distilled input. A summary is stale exactly when its session's distilled content changes — not on a timer, and not when unrelated parts of the file move.
 
-The provider is a CLI that reads a prompt on stdin and writes text. That is the whole abstraction, and it is why gm doesn't depend on any particular vendor's SDK.
+The provider is a CLI that reads a prompt on stdin and writes text. That is the whole abstraction, and it is why gigamanage doesn't depend on any particular vendor's SDK.
 
 Which CLI gets called is resolved in this order, highest first:
 
@@ -77,7 +77,7 @@ Rules 3 and 4 are the behavior from before config existed, so an upgrading user 
 
 ## Config vs cache
 
-gm owns two directories, and the split is load-bearing:
+gigamanage owns two directories, and the split is load-bearing:
 
 | | `~/.cache/gigamanage` | `~/.config/gigamanage` |
 |---|---|---|
@@ -95,7 +95,7 @@ on disk — one bounded prompt, not a scan of half a gigabyte.
 **Its tool loop belongs to the harness, not to us.** The prompt tells the model it
 may run `gm grep '<query>' --json`, and the provider is invoked with exactly that
 permission (`askArgv` in the catalog; for Claude Code, `--allowedTools 'Bash(gm grep:*)'`).
-gm parses no tool calls and speaks no vendor protocol — which is what
+gigamanage parses no tool calls and speaks no vendor protocol — which is what
 keeps the provider abstraction the single line above it. Building our own loop
 would mean per-vendor protocol handling: precisely the coupling this design
 exists to avoid.
@@ -117,4 +117,4 @@ Half a gigabyte of JSONL is too much to scan in Node, so `gm grep` shells out to
 
 ## Read-only, on purpose
 
-gm never writes to a session file. It reads harness directories and owns exactly one thing: its cache. This is what makes it safe to run against sessions that are still live and being appended to — which, on a working machine, most of them are.
+gigamanage never writes to a session file. It reads harness directories and owns exactly one thing: its cache. This is what makes it safe to run against sessions that are still live and being appended to — which, on a working machine, most of them are.

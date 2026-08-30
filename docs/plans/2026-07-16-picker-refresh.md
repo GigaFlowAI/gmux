@@ -4,7 +4,7 @@
 
 **Goal:** Add `ctrl-r` to the session picker so it reloads to the most recent sessions and kicks off summarization over them, and tighten row headlines so they read at a glance.
 
-**Architecture:** fzf's `reload(cmd)` binding replaces its item list with a command's stdout, so refresh is a hidden `gmux __picker-rows` subcommand that reprints the same NUL-delimited records `buildFzfRecords` already builds. Summarization reuses `maybeAutoSummarize` unchanged except for a `force` flag that skips its cooldown (never its lock). Headlines tighten via a prompt edit plus a `PROMPT_VERSION` folded into the summary cache key, which is what makes the edit reach summaries already on disk.
+**Architecture:** fzf's `reload(cmd)` binding replaces its item list with a command's stdout, so refresh is a hidden `gm __picker-rows` subcommand that reprints the same NUL-delimited records `buildFzfRecords` already builds. Summarization reuses `maybeAutoSummarize` unchanged except for a `force` flag that skips its cooldown (never its lock). Headlines tighten via a prompt edit plus a `PROMPT_VERSION` folded into the summary cache key, which is what makes the edit reach summaries already on disk.
 
 **Tech Stack:** TypeScript (ESM, NodeNext), commander, vitest, fzf (optional runtime dep).
 
@@ -67,7 +67,7 @@ Append to `src/core/text.ts`:
 /**
  * Single-quote for POSIX shells, escaping any embedded single quote.
  *
- * Lives in core because two callers need it: `gmux resume --print` emits a line
+ * Lives in core because two callers need it: `gm resume --print` emits a line
  * meant to be pasted into a shell, and the picker's fzf reload binding is a
  * shell command string. In both, an unquoted path with a space silently runs
  * the wrong thing rather than failing loudly.
@@ -88,7 +88,7 @@ import { shellQuote } from "../../core/text.js";
 - [ ] **Step 5: Run the full check**
 
 Run: `npm run check`
-Expected: PASS. Layers green (`cli` → `core` points left), types green, all tests pass — including the existing `gmux resume --print` tests, which must not change behavior.
+Expected: PASS. Layers green (`cli` → `core` points left), types green, all tests pass — including the existing `gm resume --print` tests, which must not change behavior.
 
 - [ ] **Step 6: Commit**
 
@@ -281,7 +281,7 @@ git commit -m "feat: tighten summary headlines to a scannable clause"
 
 ### Task 4: `force` on `maybeAutoSummarize`
 
-An explicit ctrl-r must always re-decide. The cooldown exists to keep an *incidental* re-decision free (a repeated `gmux ls`); a keypress is not incidental. Honoring it would make ctrl-r a silent no-op for its first minute.
+An explicit ctrl-r must always re-decide. The cooldown exists to keep an *incidental* re-decision free (a repeated `gm ls`); a keypress is not incidental. Honoring it would make ctrl-r a silent no-op for its first minute.
 
 **Files:**
 - Modify: `src/services/auto-summarize.ts:292-310` (`MaybeAutoSummarizeOptions`), `:328-384` (`decide`)
@@ -333,7 +333,7 @@ it("still respects the lock when forced, so hammering ctrl-r cannot stampede", a
 
 it("stays off when forced but disabled: a keypress does not override the env var", async () => {
   await seedUnsummarizedSession();
-  process.env.GMUX_AUTO_SUMMARIZE = "0";
+  process.env.GIGAMANAGE_AUTO_SUMMARIZE = "0";
   const spawner = fakeSpawner();
 
   const outcome = await maybeAutoSummarize({
@@ -347,7 +347,7 @@ it("stays off when forced but disabled: a keypress does not override the env var
 });
 ```
 
-The `GMUX_AUTO_SUMMARIZE` env var must be cleaned up — check the file's `afterEach` deletes it, and add `delete process.env.GMUX_AUTO_SUMMARIZE;` there if not.
+The `GIGAMANAGE_AUTO_SUMMARIZE` env var must be cleaned up — check the file's `afterEach` deletes it, and add `delete process.env.GIGAMANAGE_AUTO_SUMMARIZE;` there if not.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -363,12 +363,12 @@ In `src/services/auto-summarize.ts`, add to `MaybeAutoSummarizeOptions`:
    * Skip the cooldown — and only the cooldown.
    *
    * Set when the user explicitly asked for a refresh (ctrl-r in the picker).
-   * The cooldown guards against *incidental* re-decisions, like `gmux ls` in a
+   * The cooldown guards against *incidental* re-decisions, like `gm ls` in a
    * loop; a keypress is not incidental, and a key that silently does nothing
    * for its first minute reads as broken.
    *
    * The lock still applies, so hammering the key cannot start two workers, and
-   * `GMUX_AUTO_SUMMARIZE=0` still wins: force overrides our own
+   * `GIGAMANAGE_AUTO_SUMMARIZE=0` still wins: force overrides our own
    * optimisation, never the user's opt-out.
    */
   force?: boolean;
@@ -381,7 +381,7 @@ In `decide`, change the cooldown line only:
 ```ts
   if (options.enabled === false || !autoSummarizeEnabled()) return none("disabled");
 
-  // Cheapest checks first: two small file reads keep a repeated `gmux ls` free.
+  // Cheapest checks first: two small file reads keep a repeated `gm ls` free.
   if (options.force !== true && (await inCooldown(now))) return none("cooling-down");
   const held = await readLock();
   if (held && !isLockStale(held, now)) return none("locked");
@@ -481,11 +481,11 @@ Still in `src/cli/picker.ts`, replace `previewCommand()` with a shared helper. T
  * How to re-invoke *this* build, as a shell command string.
  *
  * fzf runs the preview and reload commands through a shell, and they must hit
- * this build — not whatever `gmux` happens to be on PATH. During development
- * there may be no `gmux` on PATH at all, and both would silently render nothing.
+ * this build — not whatever `gm` happens to be on PATH. During development
+ * there may be no `gm` on PATH at all, and both would silently render nothing.
  *
  * Returns null when argv[1] is unavailable, leaving callers to fall back to a
- * bare `gmux`.
+ * bare `gm`.
  */
 function selfCommand(): string | null {
   const self = process.argv[1];
@@ -495,7 +495,7 @@ function selfCommand(): string | null {
 
 function previewCommand(): string {
   const self = selfCommand();
-  return self ? `${self} show {1} --no-color` : "gmux show {1} --no-color";
+  return self ? `${self} show {1} --no-color` : "gm show {1} --no-color";
 }
 ```
 
@@ -673,7 +673,7 @@ import { PICKER_ROWS_COMMAND, type PickerRowsOptions } from "./pick.js";
 import { toFilters } from "./ls.js";
 
 /**
- * The picker's ctrl-r target, re-entered as `gmux __picker-rows`.
+ * The picker's ctrl-r target, re-entered as `gm __picker-rows`.
  *
  * Hidden: like `__auto-summarize`, it is not a thing a person runs. fzf's
  * `reload` binding replaces its item list with a command's stdout, so refresh
@@ -871,7 +871,7 @@ Replace the action body in `src/cli/commands/pick.ts`:
 
       if (views.length === 0) {
         process.stdout.write(
-          `${dim("No sessions found. If you expected some, run `gmux doctor`.")}\n`,
+          `${dim("No sessions found. If you expected some, run `gm doctor`.")}\n`,
         );
         return;
       }
@@ -924,7 +924,7 @@ Confirm, in order:
 1. The picker opens; the header reads `enter: resume   ctrl-r: refresh   ctrl-c: cancel`.
 2. Any un-summarized rows show `◐` (a pass started on open), not `○`.
 3. Press ctrl-r. The list reloads: rows stay put, nothing flickers into a different width, the preview pane still works on the highlighted row.
-4. Press ctrl-r several times fast. Check `ls ~/.cache/gmux/auto-summarize.lock` — one lock, and `pgrep -fa "__auto-summarize" | wc -l` reports at most 1. No stampede.
+4. Press ctrl-r several times fast. Check `ls ~/.cache/gigamanage/auto-summarize.lock` — one lock, and `pgrep -fa "__auto-summarize" | wc -l` reports at most 1. No stampede.
 5. Wait for a summary to land, press ctrl-r: that row's `◐` is replaced by its headline.
 6. ctrl-c still cancels; enter still resumes.
 
@@ -1022,10 +1022,10 @@ git commit -m "feat: refresh the numbered picker with r"
 
 - [ ] **Step 1: Document ctrl-r in the README**
 
-In the paragraph introducing the picker (after the `gmux ls` comparison table), append to the sentence ending "in the right harness and the right directory":
+In the paragraph introducing the picker (after the `gm ls` comparison table), append to the sentence ending "in the right harness and the right directory":
 
 ```markdown
-`gmux` on its own puts that list in a fuzzy picker, with the full context card for
+`gm` on its own puts that list in a fuzzy picker, with the full context card for
 the highlighted session alongside it — what landed, what's still open, and the
 next concrete step. Hit enter and you're back in the session, in the right
 harness and the right directory. **ctrl-r** reloads the list to your most recent
@@ -1044,7 +1044,7 @@ Follow the existing format in `CHANGELOG.md` — read it first and match its hea
 - **ctrl-r refreshes the picker.** Reloads to your most recent sessions and kicks
   off summaries for whatever needs one, without leaving the picker. `r` does the
   same in the numbered fallback.
-- Bare `gmux` now summarizes the sessions it is about to show, like `gmux ls` does.
+- Bare `gm` now summarizes the sessions it is about to show, like `gm ls` does.
   Rows being written right now are marked `◐` in the picker.
 
 ### Changed
@@ -1099,11 +1099,11 @@ gh pr create --title "feat: refresh the picker with ctrl-r" --body "$(cat <<'EOF
 
 Three things had to come together for that to be worth having:
 
-- **The picker never summarized on open.** Only `gmux ls` did. `pick`'s `postAction` hook fires after `resumeSession` waits on your harness — i.e. when you quit Claude Code. Bare `gmux` now runs the pass before drawing, like `ls` does.
+- **The picker never summarized on open.** Only `gm ls` did. `pick`'s `postAction` hook fires after `resumeSession` waits on your harness — i.e. when you quit Claude Code. Bare `gm` now runs the pass before drawing, like `ls` does.
 - **Picker rows couldn't render `◐`.** `buildFzfRecords` took no in-progress set, so a refresh would kick off work with no sign it had.
 - **Headlines overflowed the column.** The prompt asked for 80 chars into a 72-char row. Tightened to a scannable clause — and versioned, because the summary cache key covers session content only, so a prompt edit would otherwise never reach anything already on disk.
 
-`force` on `maybeAutoSummarize` skips the cooldown and nothing else: the lock still means hammering ctrl-r can't stampede, and `GMUX_AUTO_SUMMARIZE=0` still wins.
+`force` on `maybeAutoSummarize` skips the cooldown and nothing else: the lock still means hammering ctrl-r can't stampede, and `GIGAMANAGE_AUTO_SUMMARIZE=0` still wins.
 
 ## Test plan
 

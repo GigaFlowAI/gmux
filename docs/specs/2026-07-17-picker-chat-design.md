@@ -31,7 +31,7 @@ amendment the user made after the original decision, on measurements taken
 after it.** The original wording is kept visible so the change is legible and
 nobody "fixes" it back.
 
-1. **Surface** — split the preview pane. Card on top, chat underneath. `gmux`
+1. **Surface** — split the preview pane. Card on top, chat underneath. `gm`
    renders both halves into one preview command's output and owns the split.
    fzf does not gain a pane.
 2. **Focus model** — one continuous thread. The highlighted row is "the session
@@ -56,7 +56,7 @@ nobody "fixes" it back.
    as today. Nothing regresses for people who never ask.
 5. **Fallback** — ~~fzf 0.46+ gets the split chat; fzf < 0.46~~ keeps today's
    full-screen `execute` REPL; no fzf keeps the numbered list's `a` key. Bare
-   `gmux ask` and `gmux ask "q" --json` are unchanged. Nothing anyone has today is
+   `gm ask` and `gm ask "q" --json` are unchanged. Nothing anyone has today is
    taken away.
 
    **AMENDED — the floor is 0.59.0, and the oracle is `$FZF_INPUT_STATE`.** The
@@ -96,7 +96,7 @@ binary should be driven before implementation.
   already sends `--read0` records to an fzf that cannot display them. Pre-existing,
   **out of scope** — but it means the chat gate must not ride on
   `supportsMultiline()`.
-- **`gmux pick --include-automated` + ctrl-r will list gmux's own ask session.**
+- **`gm pick --include-automated` + ctrl-r will list gm's own ask session.**
   Possible today, but today's ctrl-o suspends fzf so you physically cannot press
   ctrl-r mid-call. **Accept it.** The user passed a flag meaning "show me
   non-interactive runs"; hiding one because we made it is lying to the only user
@@ -106,7 +106,7 @@ binary should be driven before implementation.
 
 ## The surface
 
-fzf has exactly **one** preview pane and cannot split it. So gmux renders both
+fzf has exactly **one** preview pane and cannot split it. So gm renders both
 halves into one preview command's output and owns the split itself. **fzf does
 not gain a pane.**
 
@@ -119,7 +119,7 @@ not gain a pane.**
 │                │ ── ask ────────────────────│  ← the divider
 │                │ you                        │
 │                │   why did this one fail?   │  ← the chat, from the transcript
-│                │ gmux                         │
+│                │ gm                         │
 │                │   The run died in apply_…  │
 └────────────────┴────────────────────────────┘
 ```
@@ -132,16 +132,16 @@ lives in a file. This is what makes `refresh-preview` sufficient and
 <self> __preview-card {1} --chat '<transcript>' --pane-lines ${FZF_PREVIEW_LINES:-0}
 ```
 
-**`__preview-card`, not `gmux show --chat …`.** `gmux show` is a public command and
+**`__preview-card`, not `gm show --chat …`.** `gm show` is a public command and
 `--chat <path>` is a private IPC channel: it is meaningless to a human at a
 terminal and exists only because fzf's preview command must be a shell string.
 Every other internal entry point here is `__`-prefixed, the prefix is load-bearing
 three times over (see *Recursion guards*), and `__picker-rows` already set the
 precedent. So the preview gets a hidden command that calls the same renderer.
 
-**`gmux show`'s public surface is unchanged** — same flags, same output, same
+**`gm show`'s public surface is unchanged** — same flags, same output, same
 `--json` schema. That also disposes of the question an earlier draft left open
-("what does `gmux show --json --chat <path>` do?"): there is no such invocation.
+("what does `gm show --json --chat <path>` do?"): there is no such invocation.
 
 **`${FZF_PREVIEW_LINES:-0}` — the `:-0` is load-bearing.** Not because the var is
 plausibly unset — per the changelog fzf has exported it to the preview process
@@ -193,10 +193,10 @@ against a 14–41 row pane — **the card already overflows the full pane by 1.2
 at every realistic size.** The split does not break the card; the card was already
 clipped. An earlier draft answered that with a six-step priority drop ladder and a
 `--pane-columns` flag, which is a rewrite of a working `formatCard` and a
-user-visible change to `gmux show` for everyone who never presses ctrl-o. That is
+user-visible change to `gm show` for everyone who never presses ctrl-o. That is
 out of scope by decision 6 and out of scope by the spec's own rule for
 `MULTILINE_FZF`: a pre-existing defect is a pre-existing defect. If `NEXT STEP`
-clipping turns out to bite in the split, that is a real observed bug in `gmux show`'s
+clipping turns out to bite in the split, that is a real observed bug in `gm show`'s
 section ordering and it gets its own small PR — probably "move NEXT STEP up", not
 a ladder.
 
@@ -239,7 +239,7 @@ redundant, and nobody has filed a bug.
 
 **So the split ships monochrome and `format.ts` is not touched.** An earlier draft
 proposed a `FORCE_COLOR=1` contract and a new `useColor` ladder, which changes
-colour behaviour for *every* piped `gmux` invocation in the tool — a blast radius
+colour behaviour for *every* piped `gm` invocation in the tool — a blast radius
 wildly out of proportion to "put a chat in the side pane", and not the chat pane
 by decision 6. The design already proves it survives without: the divider is
 carried by glyphs and never by colour, the speakers are distinguished by layout
@@ -253,13 +253,13 @@ this one and is trivially reviewable alone.
 you
   why did this one fail?
 
-gmux
+gm
   The run died in apply_patch — the span was recorded as
   aborted rather than errored, so the trace shows…
 ```
 
-`bold("you")` / `cyan("gmux")` — `bold` is the section-heading idiom, `cyan` is
-already gmux's own colour (the `where` column, the `○` marker). Both no-op in the
+`bold("you")` / `cyan("gm")` — `bold` is the section-heading idiom, `cyan` is
+already gm's own colour (the `where` column, the `○` marker). Both no-op in the
 pane today (see above); they cost nothing and are correct the day the pane gains
 colour. Bodies indented 2 via `format.ts`'s `indent()` (module-private today;
 **export it**), the same indent the card uses under every heading, so the halves
@@ -346,7 +346,7 @@ never `= enabled` means browse. The `enter` binding got this right by accident; 
 are inherited. With `FZF_DEFAULT_OPTS=--disabled`, `$FZF_INPUT_STATE` is `disabled`
 at the `start` event: the picker believes it is in ask mode from the first frame,
 enter never resumes, and ctrl-o cannot get you back. **Pass an explicit `env` to
-the fzf spawn that strips `FZF_DEFAULT_OPTS` and `FZF_DEFAULT_OPTS_FILE`.** gmux
+the fzf spawn that strips `FZF_DEFAULT_OPTS` and `FZF_DEFAULT_OPTS_FILE`.** gm
 builds its full arg set already; inheriting user opts also risks a user `--bind`
 colliding with ours.
 
@@ -444,7 +444,7 @@ Every line is load-bearing:
   single-quoted and the child would receive the literal string. Every
   `refresh-preview` would then silently miss.
 - **The filters are baked in at picker start**, exactly as `pickerAskArgs` already
-  produces them, for the reason written at pick.ts:35-42: `gmux ask` builds its own
+  produces them, for the reason written at pick.ts:35-42: `gm ask` builds its own
   window, and a window built from defaults does not contain the session you are
   pointing at, so `--focus` resolves to null and the chat answers about a list you
   never asked about — looking normal the whole time.
@@ -532,16 +532,16 @@ freezing anything.
 ### The process shape
 
 ```
-gmux pick                       allocates the transcript PATH, creates nothing
+gm pick                       allocates the transcript PATH, creates nothing
   └─ fzf --listen             $FZF_PORT + $FZF_API_KEY exported to children
-       ├─ preview   gmux __preview-card {1} --chat <path> …   re-runs on every cursor move
-       ├─ enter     gmux __ask-send --transcript <path> --focus {1} --question {q} …
+       ├─ preview   gm __preview-card {1} --chat <path> …   re-runs on every cursor move
+       ├─ enter     gm __ask-send --transcript <path> --focus {1} --question {q} …
        │              ~170ms: lock, append the question, refresh, spawn DETACHED, exit
-       │              └─ gmux __ask-run --transcript <path> --seq N …   [detached]
+       │              └─ gm __ask-run --transcript <path> --seq N …   [detached]
        │                   └─ runProviderCommand(askArgv, prompt, { onChunk, signal })
-       │                        └─ claude -p --allowedTools 'Bash(gmux grep:*)'
-       │                             └─ gmux grep …      sees GMUX_CHILD=1
-       └─ esc       gmux __ask-cancel --transcript <path>
+       │                        └─ claude -p --allowedTools 'Bash(gm grep:*)'
+       │                             └─ gm grep …      sees GIGAMANAGE_CHILD=1
+       └─ esc       gm __ask-cancel --transcript <path>
 ```
 
 Four hidden commands, all `__`-prefixed. The prefix is load-bearing three times
@@ -579,7 +579,7 @@ neither and are byte-for-byte unaffected — they still get the buffered string.
 
 **`onChunk` is a tee, not the mechanism this design depends on.** Against
 `claude -p` it fires **exactly once**, because the provider buffers. It stays for
-one reason: gmux is provider-agnostic, and a provider that *does* trickle then gets
+one reason: gm is provider-agnostic, and a provider that *does* trickle then gets
 incremental rendering for free, with no second code path and no branch. We
 neither assume streaming nor foreclose it. `AskProvider.ask` grows an optional
 `onChunk?` only so a *fake* streaming provider is expressible in tests, which is
@@ -605,7 +605,7 @@ string without a late chunk racing it.
 
 ### The transcript
 
-`~/.cache/gmux/ask/<pid>-<rand8>.jsonl`.
+`~/.cache/gigamanage/ask/<pid>-<rand8>.jsonl`.
 
 **This needs a doc amendment, in the same PR, and that is not optional.** AGENTS.md
 non-negotiable #1 says, verbatim: *"nothing keyed by content hash goes in config,
@@ -618,7 +618,7 @@ by pid rather than by content hash.
 The reasoning for cache is sound — this is a scratch IPC buffer for one live picker
 that dies with it, not a preference — but **a paragraph in a spec is not a decision,
 it is a drift with a footnote.** #1 is enforced by nothing but that doc, so the next
-agent reads AGENTS.md, sees typed text under `~/.cache/gmux`, and "fixes" it.
+agent reads AGENTS.md, sees typed text under `~/.cache/gigamanage`, and "fixes" it.
 
 So: **amend AGENTS.md #1 and `core/paths.ts`'s header to name a third category** —
 *ephemeral IPC that dies with the process that created it, never read by a later
@@ -629,7 +629,7 @@ exceptional, and the rule still forbids what it exists to forbid.
 - **Not `configDir()`** — the thread dies with the picker; that is disposable by
   construction, and `configDir()` implies a retention policy we are not writing.
 - **Not `os.tmpdir()`** — `paths.ts` opens with "it never writes anywhere else",
-  `cacheDir()` honours `XDG_CACHE_HOME` which is how the test suite redirects gmux's
+  `cacheDir()` honours `XDG_CACHE_HOME` which is how the test suite redirects gm's
   writes, and tmpdir reapers are free to delete a file mid-append.
 - **A subdirectory**, so the orphan sweep is a `readdir` of a directory that
   contains nothing but transcripts and cannot mistake `index.json` for one.
@@ -685,7 +685,7 @@ whole point of the format.
 document rewritten atomically. Rejected: a rename-in-place has a window where the
 reader sees the *previous* answer (visible stutter), a non-atomic rewrite has a
 window where the file is invalid JSON, and with a preview that re-runs on every
-cursor move that window *will* be hit. **gmux must never truncate-and-rewrite the
+cursor move that window *will* be hit. **gm must never truncate-and-rewrite the
 transcript**, or the pane flashes empty.
 
 ANSI from the provider needs no handling: `JSON.stringify` escapes control bytes,
@@ -704,7 +704,7 @@ export type AskEvent =
 
 **`meta` has exactly one writer and one reader, or it would not be here.** The
 first `__ask-send` writes it inside the same `openSync` that creates the file,
-before the first `question` record. It is read by `gmux doctor`-style debugging and
+before the first `question` record. It is read by `gm doctor`-style debugging and
 by a human running `cat` on a transcript whose answers look wrong — `provider` is
 the field that tells you *which* CLI produced them. `foldCompletedTurns` ignores it.
 (An earlier draft had it in the format example and in the union with no writer named
@@ -754,7 +754,7 @@ worker down before it finishes writing the transcript.
 2. **A chunk arrives**, throttled to `REFRESH_INTERVAL_MS = 150` (trailing edge).
    Against `claude -p` this fires once, with the answer. It is throttled anyway
    because `onChunk` is a tee and a trickling provider would otherwise spawn one
-   `gmux __preview-card` **per chunk** — fzf does not save us there. Measured on 0.74:
+   `gm __preview-card` **per chunk** — fzf does not save us there. Measured on 0.74:
    100 back-to-back `refresh-preview` POSTs ran a fast preview command **100 times**,
    zero coalescing. fzf collapses only refreshes arriving while a preview is still in
    flight; it bounds concurrency, not spawn rate.
@@ -771,7 +771,7 @@ specified rather than implied. `foldForDisplay` renders a `question` with no `en
 you
   why did this one fail?
 
-gmux
+gm
   thinking… 14s   (esc to cancel)
 ```
 
@@ -826,7 +826,7 @@ The fold's rules, each a decision:
    older answers rather than dropping turns whole, to stop a pronoun dangling. That
    is a second speculative decision stacked on the first; cut. A bare slice is the
    bound.) **Bounding at the fold, not in `buildAskPrompt`**, is deliberate:
-   `buildAskPrompt` is shared with bare `gmux ask`, which decision 5 says is unchanged.
+   `buildAskPrompt` is shared with bare `gm ask`, which decision 5 says is unchanged.
 
 **Read-your-writes:** `__ask-send` appends the `question` **then** spawns. The
 `writeSync` + close before `spawn()` is what makes that a happens-before rather than
@@ -863,7 +863,7 @@ billing, and kept writing into the transcript*:
 (verified `PID 7709, PGID 7709, PPID 1`), so `process.kill(-pid, "SIGTERM")` reaps the
 tree, `SIGKILL` after a grace period.
 
-**`setsid` does not exist on macOS** — gmux's own platform. A shell-level `setsid`
+**`setsid` does not exist on macOS** — gm's own platform. A shell-level `setsid`
 binding would break for every Mac user. Node's `detached: true` is the portable
 equivalent; it calls `setsid(2)`.
 
@@ -892,7 +892,7 @@ transcript path — and *it* removes the transcript, `.browseq` and `.lock`, and
 best-effort kills the worker's group. The parent must kill the group because
 accept/abort never run the esc binding. Normal exit already covers ctrl-c *inside* fzf
 (fzf exits, the promise resolves, `finally` runs); the handlers cover the shell killing
-`gmux`.
+`gm`.
 
 **Orphans after `kill -9`.** `pick.ts` sweeps `askTranscriptDir()` before it calls
 `pickSession` — again the parent, not the picker. Remove `<pid>-<rand>.jsonl` (and its
@@ -972,8 +972,8 @@ Both from the sibling spec, both now on a new path.
 `childEnv()`, and the worker calls it without an `env` override. The invariant to write
 down and test: **the worker must not pass `env` to `runProviderCommand`**. A well-meant
 `env: { ...process.env, FZF_PORT: port }` on that call would silently drop
-`GMUX_CHILD` and reopen the loop. Pass `FZF_PORT` on the worker's **argv**, and the
-trap cannot be set. (The argv rule protects `GMUX_CHILD` on the *provider* call. It
+`GIGAMANAGE_CHILD` and reopen the loop. Pass `FZF_PORT` on the worker's **argv**, and the
+trap cannot be set. (The argv rule protects `GIGAMANAGE_CHILD` on the *provider* call. It
 does not apply to the worker *spawn*, which sets its env deliberately — and which is where
 `FZF_API_KEY` rides. Two different processes, two different rules.)
 
@@ -981,17 +981,17 @@ does not apply to the worker *spawn*, which sets its env deliberately — and wh
 
 1. **`main.ts`'s `postAction` exemption list is by NAME.**
    `runsItsOwn = new Set([AUTO_SUMMARIZE_COMMAND, PICKER_ROWS_COMMAND, "ls", "pick"])`.
-   `__ask-send` inherits fzf's env, which inherited `gmux pick`'s — so `GMUX_CHILD` is
+   `__ask-send` inherits fzf's env, which inherited `gm pick`'s — so `GIGAMANAGE_CHILD` is
    **unset** and it is not in the set. **Every question you type would fire a background
    summarize decision from inside fzf**, whose `notify` writes to stderr, which fzf owns
    and is painting. The lock absorbs the spawn but not the decision and not the stderr
    write. **Fix, structurally:** `if (actionCommand.name().startsWith("__")) return;` —
    the same convention `shouldRunSetupWizard` already uses, so the next hidden command
-   does not re-learn this. Bare `gmux ask` is a non-`__` command and stays exactly as it is,
+   does not re-learn this. Bare `gm ask` is a non-`__` command and stays exactly as it is,
    per decision 5.
 2. **The worker spawn sets its own env.** Mirror `spawnWorker`:
-   `{ detached: true, stdio: "ignore", env: { ...childEnv(), GMUX_AUTO_SUMMARIZE: "0", FZF_API_KEY: key } }`,
-   then `unref()`. `childEnv()` not `process.env`, because the worker is a `gmux` that is
+   `{ detached: true, stdio: "ignore", env: { ...childEnv(), GIGAMANAGE_AUTO_SUMMARIZE: "0", FZF_API_KEY: key } }`,
+   then `unref()`. `childEnv()` not `process.env`, because the worker is a `gm` that is
    about to make a model call — it is the definition of a child.
 
 **The `__` prefix is load-bearing a third time:** `shouldRunSetupWizard` bails on `__`
@@ -1004,7 +1004,7 @@ flags; drop them and the command becomes `node src/cli/main.ts`, which Node 20 c
 `__ask-send` **spawns a detached grandchild** and must re-forward its own
 `process.execArgv` as `spawn(process.execPath, [...process.execArgv, entry, "__ask-run", …])`.
 Because `__ask-send` was itself launched through `selfCommandHere()`, its `execArgv`
-already carries tsx's flags, so this composes. Hardcode `"gmux"` and every answer silently
+already carries tsx's flags, so this composes. Hardcode `"gm"` and every answer silently
 never arrives in dev — with `stdio: "ignore"` swallowing the evidence and fzf repainting
 over what is left.
 
@@ -1126,7 +1126,7 @@ export function fzfArgs(spec: FzfSpec): string[];
 ```
 
 **No `listenPort`.** fzf assigns the port itself (`--listen` with no argument) and exports
-`$FZF_PORT` to children; nothing in gmux needs to know it. An earlier draft had the field and
+`$FZF_PORT` to children; nothing in gm needs to know it. An earlier draft had the field and
 a `start` binding that wrote the port to a file nobody read.
 
 This breaks 11 test call sites. That is the largest mechanical cost in the change, it is
@@ -1163,7 +1163,7 @@ already made above.
 
 ## Rejected alternatives
 
-**A tmux split pane.** Rejected: it makes the feature conditional on a multiplexer. gmux's
+**A tmux split pane.** Rejected: it makes the feature conditional on a multiplexer. gm's
 picker works in a bare terminal, over ssh, inside another harness's shell. A chat that only
 exists under tmux is a chat most users never see, and the fallback would have to be built
 anyway — so we'd own both.
@@ -1194,7 +1194,7 @@ What was rejected was a spinner *instead of* those.
 
 **`--output-format stream-json` for real token streaming.** Rejected: it is a vendor
 envelope, and non-negotiable #7 forbids parsing one — and it is Claude-only, so Codex, which
-gmux supports today, would get nothing. Streaming for one provider at the cost of the provider
+gm supports today, would get nothing. Streaming for one provider at the cost of the provider
 abstraction is not a trade this tool makes.
 
 **`$FZF_PROMPT` as the mode oracle** (which would have bought a 0.46 floor). Rejected: it
@@ -1266,7 +1266,7 @@ unchanged** — now true rather than aspirational. The orphan sweep runs in `pic
 
 **Also required, and currently missing:** `tests/setup.ts` sets `XDG_CONFIG_HOME` but **not
 `XDG_CACHE_HOME`** (confirmed — it sets exactly one). `cacheDir()` honours `XDG_CACHE_HOME`, so
-the first ask-transcript test would write to the developer's real `~/.cache/gmux`.
+the first ask-transcript test would write to the developer's real `~/.cache/gigamanage`.
 Non-optional — this is exactly the class of bug setup.ts's own header describes.
 
 **DRY, before the third copy:** pick.ts:52-58 and pick.ts:70-76 are already byte-identical
@@ -1411,7 +1411,7 @@ Do not spawn a detached child in a test. Follow `spawnWorker`: assert the *decis
 
 Nothing pins the fallback ladder today. The closest existing test covers one cell of a four-cell
 matrix; nothing asserts that an old fzf still gets `execute`, that no-fzf still gets `a`, or that
-bare `gmux ask` is untouched. That gap is precisely why decision 5 is a decision. The file's header
+bare `gm ask` is untouched. That gap is precisely why decision 5 is a decision. The file's header
 says what it is for: *these are not tests of the new feature — they are tests that the new feature
 is invisible to everyone who cannot use it.*
 
@@ -1440,7 +1440,7 @@ this ships:
 - **esc restores the filter** (type `web`, the list must filter again)
 - **ctrl-r is inert in ask mode and live again after esc**
 - **the empty state is byte-identical to today**
-- **`SHELL=/bin/dash gmux pick` and `SHELL=/bin/tcsh gmux pick`**: ctrl-o enters ask mode, enter
+- **`SHELL=/bin/dash gm pick` and `SHELL=/bin/tcsh gm pick`**: ctrl-o enters ask mode, enter
   resumes in browse mode. This is the one an earlier draft would have shipped broken.
 - **fzf 0.58 gets the old REPL, and the terminal survives it**
 - **`npm run dev -- pick` works** (the `execArgv` trap, twice)
@@ -1460,10 +1460,10 @@ this ships:
   the answer lands in one paint after a `thinking… Ns` count.** That is the accepted cost of
   non-negotiable #7, stated plainly and decided.
 - **Not word-by-word streaming.** There is no stream. See decision 3.
-- **Not a change to `gmux ask`.** Bare `gmux ask`, `gmux ask "q"` and `gmux ask "q" --json` are untouched,
+- **Not a change to `gm ask`.** Bare `gm ask`, `gm ask "q"` and `gm ask "q" --json` are untouched,
   per decision 5. `buildAskPrompt` is untouched. The replay bound lives in the fold precisely to
   keep that true.
-- **Not a change to `gmux show`.** The preview is `__preview-card`, a hidden command. `gmux show`'s
+- **Not a change to `gm show`.** The preview is `__preview-card`, a hidden command. `gm show`'s
   flags, output and `--json` schema are exactly as they are today.
 - **Not a rewrite of `formatCard`.** The card clips at the divider as it already clips at the pane
   bottom. Pre-existing, out of scope.
@@ -1471,6 +1471,6 @@ this ships:
 - **Not a fix for `MULTILINE_FZF = [0,46,0]`.** It is wrong (0.53.0 is the real answer) and it is
   pre-existing. The chat gate is given its own constant so the eventual fix cannot silently change
   what ctrl-o does.
-- **Not a second preview pane.** fzf has one. gmux renders both halves into it and owns the split.
+- **Not a second preview pane.** fzf has one. gm renders both halves into it and owns the split.
   `change-preview-window` is never called — which is also why there is no reflow and therefore no
   flicker.

@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript, ESM, Node 20+, Vitest.
 
-**Spec:** `/Users/jamesgao/Projects/gmux/.claude/worktrees/generic-munching-hare/docs/specs/2026-07-17-summary-overview-design.md`
+**Spec:** `/Users/jamesgao/Projects/gigamanage/.claude/worktrees/generic-munching-hare/docs/specs/2026-07-17-summary-overview-design.md`
 
 **Branch:** `summary-overview` (already created, spec already committed).
 
@@ -17,7 +17,7 @@
 - **Layer rule:** `core ← adapters ← services ← cli`. Import from your own layer or leftward, never rightward. `npm test` fails on violations.
 - **Read-only:** never write to `~/.claude` or `~/.codex`.
 - **No test calls a real model.** Inject `FakeProvider` (`tests/services.test.ts:255-268`).
-- **No test reads the real home directory.** `GMUX_HOME` points at a temp dir.
+- **No test reads the real home directory.** `GIGAMANAGE_HOME` points at a temp dir.
 - **Every read command supports `--json`.**
 - **Every error carries a `fix`** (`src/core/errors.ts`).
 - **`SessionRecord` changed ⇒ bump `INDEX_VERSION`** (`src/services/index-store.ts:20`). Done in Task 2.
@@ -157,7 +157,7 @@ git commit -m "feat: add DecimatingSampler for bounded whole-stream sampling"
 
 Add to `tests/adapters.test.ts`. A 30-turn session is the case that is impossible today: with `RECENT_PROMPT_COUNT = 12`, turn 1 is gone.
 
-This file drives adapters **directly** and sets only `GMUX_HOME`. Do not reach for `refreshIndex()` here — it writes to the index cache, and with no `XDG_CACHE_HOME` set in this file it would write to the developer's real `~/.cache`. Non-negotiable #3.
+This file drives adapters **directly** and sets only `GIGAMANAGE_HOME`. Do not reach for `refreshIndex()` here — it writes to the index cache, and with no `XDG_CACHE_HOME` set in this file it would write to the developer's real `~/.cache`. Non-negotiable #3.
 
 ```ts
 describe("the session arc", () => {
@@ -787,7 +787,7 @@ describe("the detail card", () => {
     const card = plain({ record: record(), summary: null });
 
     expect(card).toContain("No summary yet.");
-    expect(card).toContain("gmux summarize aaaa1111");
+    expect(card).toContain("gm summarize aaaa1111");
     expect(card).toContain("TITLE (recorded at session start)");
   });
 });
@@ -833,7 +833,7 @@ Expected: PASS, 5 tests.
 In "What makes it different", the first bullet says summaries write *"three things: what landed, what's still open, and the next concrete step"*. It is four now, and the framing "reads the tail" is no longer accurate:
 
 ```markdown
-**Summaries describe the end, not the beginning.** gmux reads each transcript's *arc* — what you originally asked for, how the work moved, your last instructions, the agent's final message, the files it touched, the last command that failed — and writes four things: what the session is about, what landed most recently, what's still open, and the next concrete step. The harness title tells you where the work *started*; this tells you what it *became*. That's the whole point of the tool.
+**Summaries describe the end, not the beginning.** gigamanage reads each transcript's *arc* — what you originally asked for, how the work moved, your last instructions, the agent's final message, the files it touched, the last command that failed — and writes four things: what the session is about, what landed most recently, what's still open, and the next concrete step. The harness title tells you where the work *started*; this tells you what it *became*. That's the whole point of the tool.
 ```
 
 - [ ] **Step 6: Correct `docs/architecture.md`**
@@ -851,7 +851,7 @@ Then the section at line 47, currently titled `## Why summaries read the tail`. 
 ```markdown
 ## Why summaries read the arc
 
-Claude Code writes an `aiTitle` in a session's first seconds and never revises it. In a long session it names the opening prompt — precisely the wrong thing when you're deciding what to resume. gmux exists to fix that.
+Claude Code writes an `aiTitle` in a session's first seconds and never revises it. In a long session it names the opening prompt — precisely the wrong thing when you're deciding what to resume. gigamanage exists to fix that.
 
 The first fix was to read only the **end** of the session. That overcorrected: a status with no subject ("timestamp check still red") tells you nothing when you cannot remember which session it belongs to. So `distill()` sends the **arc** — the original ask, waypoints sampled across the session, the recent human turns, the final assistant message, files touched, the last failure. The head is in the prompt; it never speaks alone, and the recorded title is always labelled stale.
 ```
@@ -879,7 +879,7 @@ heading would be a lie. Also the first test coverage formatCard has had."
 
 ---
 
-### Task 6: `gmux ask` sees the overview
+### Task 6: `gm ask` sees the overview
 
 **Files:**
 - Modify: `src/services/ask.ts:81-86`
@@ -933,13 +933,13 @@ Expected: the index rebuilds (INDEX_VERSION bumped) and summaries regenerate (PR
 Run: `npm run dev -- show <one of the ids>`
 Expected: the card leads with `OVERALL`, followed by `RECENT WORK`.
 
-This costs real model calls — it is the one-time regeneration the spec accepted. Skip if no provider is configured (`gmux setup`).
+This costs real model calls — it is the one-time regeneration the spec accepted. Skip if no provider is configured (`gm setup`).
 
 - [ ] **Step 6: Commit and open the PR**
 
 ```bash
 git add src/services/ask.ts tests/ask.test.ts
-git commit -m "feat: give gmux ask the session overview"
+git commit -m "feat: give gm ask the session overview"
 git push -u origin summary-overview
 gh pr create --title "Summaries that orient, not just report" --body "$(cat <<'EOF'
 ## What

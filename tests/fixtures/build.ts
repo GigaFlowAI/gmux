@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 export async function tempHome(): Promise<string> {
-  return mkdtemp(join(tmpdir(), "gm-test-"));
+  return mkdtemp(join(tmpdir(), "gigamanage-test-"));
 }
 
 function jsonl(lines: unknown[]): string {

@@ -1,7 +1,7 @@
 import type { SessionRecord, SessionRef, HarnessId } from "../core/types.js";
 
 /**
- * The one seam that makes gm harness-agnostic.
+ * The one seam that makes gigamanage harness-agnostic.
  *
  * To support a new agent harness, implement this interface in a single file
  * under `src/adapters/` and register it in `registry.ts`. Nothing else in the

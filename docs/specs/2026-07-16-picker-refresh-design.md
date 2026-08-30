@@ -5,13 +5,13 @@
 
 ## The problem
 
-The picker is a dead end. `gmux` loads a list, hands it to fzf, and that list is
+The picker is a dead end. `gm` loads a list, hands it to fzf, and that list is
 frozen until you quit and re-run. Sessions you started since don't appear.
 Summaries that landed while you were reading don't show up. Rows marked `○` stay
-`○` forever, because `gmux pick` never kicks off a summarize pass at all — only
-`gmux ls` does.
+`○` forever, because `gm pick` never kicks off a summarize pass at all — only
+`gm ls` does.
 
-That fights what gmux is for. It's a light browser over the harnesses; you
+That fights what gigamanage is for. It's a light browser over the harnesses; you
 should be able to sit in it and navigate, not treat it as a one-shot query.
 
 Separately, the one-liner each row shows is looser than the column it lives in.
@@ -72,7 +72,7 @@ step, and every future prompt edit gets the same lever.
 The first run after this ships re-summarizes recent sessions. That is real token
 spend, and it is the point: without it the change is invisible. It is bounded by
 the existing `MAX_PER_PASS = 50` per pass, runs in the background, and the
-foreground never waits on it. `GMUX_AUTO_SUMMARIZE=0` still opts out
+foreground never waits on it. `GIGAMANAGE_AUTO_SUMMARIZE=0` still opts out
 entirely.
 
 ## 2. ctrl-r in the picker
@@ -83,7 +83,7 @@ fzf's `reload(cmd)` replaces its item list with the command's stdout. So the
 reload target is a command that prints exactly what `buildFzfRecords` already
 builds.
 
-Add `src/cli/commands/picker-rows.ts`, registering a hidden `gmux __picker-rows`
+Add `src/cli/commands/picker-rows.ts`, registering a hidden `gm __picker-rows`
 alongside the existing hidden `__auto-summarize`:
 
 - Takes the same filter flags as `pick` (`--harness`, `-p`, `-b`, `-s`, `-n`,
@@ -117,8 +117,8 @@ In `pickWithFzf` (`src/cli/picker.ts`):
 --header=enter: resume   ctrl-r: refresh   ctrl-c: cancel
 ```
 
-The command must re-invoke *this* build, not whatever `gmux` is on PATH — during
-development there may be no `gmux` on PATH at all, and the reload would silently
+The command must re-invoke *this* build, not whatever `gm` is on PATH — during
+development there may be no `gm` on PATH at all, and the reload would silently
 empty the list. `previewCommand()` already solves this by spawning
 `process.execPath process.argv[1]`; factor that into a shared `selfCommand()`
 helper and build both on top of it.
@@ -168,7 +168,7 @@ any session whose summary matches its current content hash, so ctrl-r on an
 already-summarized list costs a few cache reads and does nothing else. This is
 what makes the key safe to lean on.
 
-The cooldown exists so a repeated `gmux ls` costs nothing — it guards against
+The cooldown exists so a repeated `gm ls` costs nothing — it guards against
 *incidental* re-decisions. A keypress is not incidental. Honoring it would make
 ctrl-r a silent no-op for the first minute after opening the picker, which reads
 as broken.
@@ -231,7 +231,7 @@ Pure functions carry the tests, matching how `buildFzfRecords` and
 | `autoSummarizeCandidates` still excludes automated + sidechain | The feedback-loop guard survives the refactor |
 
 The fzf binding itself is not unit-testable. Verify by driving the real picker:
-open `gmux`, press ctrl-r, confirm rows reload, `◐` appears, and a second press
+open `gm`, press ctrl-r, confirm rows reload, `◐` appears, and a second press
 doesn't start a second worker.
 
 `scripts/check-layers.mjs` must stay green. Everything new lives in `cli`

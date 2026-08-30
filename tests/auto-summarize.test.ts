@@ -3,7 +3,7 @@
  *
  * The rules this suite exists to hold down:
  *
- *   - gm never summarizes its own summarizer (the feedback loop);
+ *   - gigamanage never summarizes its own summarizer (the feedback loop);
  *   - it never re-writes a summary that is still current (the money);
  *   - it never spawns two workers at once (the stampede);
  *   - and it can be switched off.
@@ -118,9 +118,9 @@ function fakeSpawner() {
 
 describe("the feedback-loop guard", () => {
   // THE ONE THAT MATTERS. `claude -p` writes a Claude Code session for every
-  // summary it produces. If those were targets, gm would summarize its
+  // summary it produces. If those were targets, gigamanage would summarize its
   // own summarizer, whose summaries would create more sessions, forever.
-  it("never targets an automated session — gm must not summarize its own `claude -p` runs", () => {
+  it("never targets an automated session — gigamanage must not summarize its own `claude -p` runs", () => {
     const records = [
       record({ sessionId: "human", updatedAt: "2026-07-01T00:00:00.000Z" }),
       // These are exactly what our own summarizer leaves behind.

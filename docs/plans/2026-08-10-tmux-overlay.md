@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a tmux integration layer to gmux so `ctrl+g` covers every pane, in place, with its own summary card — and dismisses on any key.
+**Goal:** Add a tmux integration layer to gigamanage so `ctrl+g` covers every pane, in place, with its own summary card — and dismisses on any key.
 
-**Architecture:** A new tmux integration layer consumes the existing session/summary engine. `services/` gains the tmux I/O, the pane→session resolver, and the pane-link store; `cli/` gains the overlay renderer, the `gmux overlay`/`gmux run`/`gmux tmux` commands, and the picker bridge. Nothing in the existing adapters, summarizer, or index changes shape. If tmux is absent, none of it loads and `gmux` behaves exactly as before.
+**Architecture:** A new tmux integration layer consumes the existing session/summary engine. `services/` gains the tmux I/O, the pane→session resolver, and the pane-link store; `cli/` gains the overlay renderer, the `gm overlay`/`gm run`/`gm tmux` commands, and the picker bridge. Nothing in the existing adapters, summarizer, or index changes shape. If tmux is absent, none of it loads and `gm` behaves exactly as before.
 
 **Tech Stack:** TypeScript (ESM, NodeNext — imports end in `.js`), commander, vitest. tmux ≥ 3.2 at runtime only.
 
@@ -12,10 +12,10 @@
 
 - **Layer rule:** `core ← adapters ← services ← cli`. Imports point left or sideways, never right. `scripts/check-layers.mjs` enforces it in `npm test`/CI. tmux I/O, the resolver, and the pane-link store live in `services`; everything user-facing lives in `cli`.
 - **ESM import paths** end in `.js` even for `.ts` files (e.g. `import { cacheDir } from "../core/paths.js"`).
-- **Read-only on session files.** gmux owns only its cache/config. The overlay never writes to, splits, or restarts a live pane's process.
+- **Read-only on session files.** gigamanage owns only its cache/config. The overlay never writes to, splits, or restarts a live pane's process.
 - **No model calls in render paths.** The overlay renders from the index/summary cache; refresh is delegated to the existing detached `auto-summarize` worker, never run inline.
 - **Colour is gated.** Reuse `format.ts` helpers; do not introduce raw ANSI colour in a way that breaks `NO_COLOR`/`TERM=dumb`. The overlay is monochrome in v1 (structure by layout, not colour).
-- **Tests never touch the real home dir.** `tests/setup.ts` points `XDG_CACHE_HOME`/`XDG_CONFIG_HOME` at throwaway temp dirs; tests that need the harness tree set `GMUX_HOME`. No test spawns a detached child or a real model — assert spawn intent as data and inject spawners.
+- **Tests never touch the real home dir.** `tests/setup.ts` points `XDG_CACHE_HOME`/`XDG_CONFIG_HOME` at throwaway temp dirs; tests that need the harness tree set `GIGAMANAGE_HOME`. No test spawns a detached child or a real model — assert spawn intent as data and inject spawners.
 - **Run after each task:** `npm run check` (layers + types + vitest) must be green before the task's commit.
 - **tmux runtime floor:** `display-popup` needs tmux ≥ 3.2. `supportsDisplayPopup` is the single source of that truth.
 
@@ -28,9 +28,9 @@
 - `src/services/tmux-resolve.ts` — pure pane→session resolution (explicit link, else cwd+recency).
 - `src/services/tmux.ts` — thin `tmux` binary wrappers + pure parsers (pane list, version).
 - `src/cli/overlay.ts` — pure rendering: cards drawn into pane rectangles with absolute positioning.
-- `src/cli/commands/overlay.ts` — the `gmux overlay <window>` command (glue: read → resolve → paint → wait for key).
-- `src/cli/commands/run.ts` — `gmux run <harness> [args…]`, records the exact link.
-- `src/cli/commands/tmux.ts` — `gmux tmux install|uninstall`, manages the `~/.tmux.conf` block.
+- `src/cli/commands/overlay.ts` — the `gm overlay <window>` command (glue: read → resolve → paint → wait for key).
+- `src/cli/commands/run.ts` — `gm run <harness> [args…]`, records the exact link.
+- `src/cli/commands/tmux.ts` — `gm tmux install|uninstall`, manages the `~/.tmux.conf` block.
 - Test files mirror each under `tests/`.
 
 **Modified:**
@@ -62,7 +62,7 @@ In `src/core/types.ts`, after `SessionRef`, add:
 
 ```ts
 /**
- * One tmux pane as gmux sees it: geometry plus enough to resolve it to a
+ * One tmux pane as gigamanage sees it: geometry plus enough to resolve it to a
  * session. `command` is `pane_current_command` (the foreground process, e.g.
  * "claude", "codex", "node", "zsh") — a weak signal, since a node-based harness
  * often shows as "node"; the cwd carries most of the resolution.
@@ -78,7 +78,7 @@ export interface TmuxPane {
 }
 
 /**
- * An exact pane→session link recorded by `gmux run`. Ephemeral runtime state: a
+ * An exact pane→session link recorded by `gm run`. Ephemeral runtime state: a
  * `paneId` means nothing once the tmux server dies, so this lives in the cache
  * and is pruned to the live pane set on every read of the overlay.
  */
@@ -95,7 +95,7 @@ In `src/core/paths.ts`, after `summaryPath`, add:
 
 ```ts
 /**
- * The pane→session links written by `gmux run`. Cache, not config: keyed by tmux
+ * The pane→session links written by `gm run`. Cache, not config: keyed by tmux
  * pane ids that die with the server, disposable, regenerated by living in the
  * tool. Worst case of deleting it: a pane falls back to the cwd heuristic.
  */
@@ -166,7 +166,7 @@ Create `src/services/pane-links.ts`:
 
 ```ts
 /**
- * The pane→session links `gmux run` records, so the overlay maps a live pane to
+ * The pane→session links `gm run` records, so the overlay maps a live pane to
  * the exact session it launched rather than guessing. Cache, disposable, pruned
  * to the live pane set on every overlay render.
  */
@@ -367,7 +367,7 @@ Create `src/services/tmux-resolve.ts`:
 
 ```ts
 /**
- * Map a live tmux pane to the session it is running. Hybrid: an exact `gmux run`
+ * Map a live tmux pane to the session it is running. Hybrid: an exact `gm run`
  * link wins; otherwise the newest transcript in the pane's cwd, preferring the
  * harness the foreground command points to. No match is a normal case (a plain
  * shell), rendered as a placeholder — never an error.
@@ -531,9 +531,9 @@ Create `src/services/tmux.ts`:
 
 ```ts
 /**
- * The narrow surface where gmux shells out to `tmux`. The parsers are pure
+ * The narrow surface where gigamanage shells out to `tmux`. The parsers are pure
  * (and tested); the two `run` wrappers are thin shells over documented tmux
- * flags, guarded at the edges by the `gmux doctor` version check.
+ * flags, guarded at the edges by the `gm doctor` version check.
  */
 
 import { execFile } from "node:child_process";
@@ -841,7 +841,7 @@ export function cellLines(cell: OverlayCell, width: number, height: number, now:
     body.push(...section("STILL OPEN", summary.open, w));
     body.push(...section("NEXT STEP", summary.nextStep, w));
   } else {
-    body.push("no summary yet — gmux summarize " + record.sessionId.slice(0, 8));
+    body.push("no summary yet — gm summarize " + record.sessionId.slice(0, 8));
   }
 
   return body.slice(0, h);
@@ -881,7 +881,7 @@ git commit -m "feat(tmux): compact in-place overlay card renderer"
 
 ---
 
-## Task 5: The `gmux overlay <window>` command
+## Task 5: The `gm overlay <window>` command
 
 **Files:**
 - Create: `src/cli/commands/overlay.ts`
@@ -994,7 +994,7 @@ async function frame(windowId: string): Promise<string> {
 async function runOverlay(windowId: string): Promise<void> {
   const version = await tmuxVersion();
   if (!supportsDisplayPopup(version)) {
-    process.stderr.write("gmux overlay needs tmux >= 3.2. Run `gmux doctor`.\n");
+    process.stderr.write("gm overlay needs tmux >= 3.2. Run `gm doctor`.\n");
     process.exit(1);
   }
 
@@ -1068,12 +1068,12 @@ Expected: each pane's rectangle shows its summary card (or "no agent here" for a
 
 ```bash
 git add src/cli/commands/overlay.ts src/cli/main.ts tests/overlay-command.test.ts
-git commit -m "feat(tmux): gmux overlay command paints and dismisses on any key"
+git commit -m "feat(tmux): gm overlay command paints and dismisses on any key"
 ```
 
 ---
 
-## Task 6: `gmux run <harness> [args…]` — exact mapping
+## Task 6: `gm run <harness> [args…]` — exact mapping
 
 **Files:**
 - Modify: `src/adapters/types.ts` (add `launchCommand`)
@@ -1086,14 +1086,14 @@ git commit -m "feat(tmux): gmux overlay command paints and dismisses on any key"
 - Consumes: `allAdapters`, `adapterById` (registry); `writePaneLink` (Task 1); `HarnessAdapter`.
 - Produces: `HarnessAdapter.launchCommand: string`; `resolveHarnessArg(arg: string): HarnessAdapter | null`; `pickNewSession(before: readonly SessionRef[], after: readonly SessionRef[]): SessionRef | null`; `registerRun(program: Command): void`.
 
-Deviation from the spec's "exec, no wrapper lingering": a harness only reveals its session id *after* it starts, and `exec` would replace this process before we could read it. So `gmux run` spawns the harness as a child with inherited stdio (interactively identical) and lingers as a thin parent solely to capture the new session id and write the link. Documented here so it is a decision, not a surprise.
+Deviation from the spec's "exec, no wrapper lingering": a harness only reveals its session id *after* it starts, and `exec` would replace this process before we could read it. So `gm run` spawns the harness as a child with inherited stdio (interactively identical) and lingers as a thin parent solely to capture the new session id and write the link. Documented here so it is a decision, not a surprise.
 
 - [ ] **Step 1: Add `launchCommand` to the adapter seam**
 
 In `src/adapters/types.ts`, after `processNames`, add:
 
 ```ts
-  /** The binary `gmux run` launches for this harness, e.g. "claude" or "codex". */
+  /** The binary `gm run` launches for this harness, e.g. "claude" or "codex". */
   readonly launchCommand: string;
 ```
 
@@ -1177,7 +1177,7 @@ import { dim } from "../format.js";
 const DETECT_WINDOW_MS = 8000;
 const DETECT_POLL_MS = 500;
 
-/** Match `gmux run <arg>` to a harness by id or by a process-name alias. */
+/** Match `gm run <arg>` to a harness by id or by a process-name alias. */
 export function resolveHarnessArg(arg: string): HarnessAdapter | null {
   const needle = arg.trim().toLowerCase();
   return (
@@ -1240,7 +1240,7 @@ export function registerRun(program: Command): void {
       const child = spawn(adapter.launchCommand, args, { stdio: "inherit" });
 
       if (paneId) {
-        process.stderr.write(`${dim(`gmux: linking pane ${paneId} to this ${adapter.displayName} session`)}\n`);
+        process.stderr.write(`${dim(`gm: linking pane ${paneId} to this ${adapter.displayName} session`)}\n`);
         void captureLink(adapter, paneId, before);
       }
 
@@ -1280,7 +1280,7 @@ node "$(pwd)/dist/cli/main.js" run claude
 
 ```bash
 git add src/adapters/types.ts src/adapters/claude-code.ts src/adapters/codex.ts src/cli/commands/run.ts src/cli/main.ts tests/run-command.test.ts
-git commit -m "feat(tmux): gmux run records an exact pane->session link"
+git commit -m "feat(tmux): gm run records an exact pane->session link"
 ```
 
 ---
@@ -1294,7 +1294,7 @@ git commit -m "feat(tmux): gmux run records an exact pane->session link"
 
 **Interfaces:**
 - Consumes: `adapterById` (registry); `ResumeCommand` (adapters/types); `SessionRecord`.
-- Produces: `newWindowArgv(resume: ResumeCommand): string[]`; `resumeInNewWindow(record: SessionRecord): Promise<void>`; a hidden `--resume-in-window` option on `gmux pick`.
+- Produces: `newWindowArgv(resume: ResumeCommand): string[]`; `resumeInNewWindow(record: SessionRecord): Promise<void>`; a hidden `--resume-in-window` option on `gm pick`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1344,7 +1344,7 @@ export function newWindowArgv(resume: ResumeCommand): string[] {
 /**
  * Resume a session in a NEW tmux window instead of replacing this process.
  *
- * Used only by the picker bridge (`gmux pick --resume-in-window`), which runs
+ * Used only by the picker bridge (`gm pick --resume-in-window`), which runs
  * inside a `display-popup`: exec'ing the harness there would trap it in the
  * ephemeral popup, gone the moment it exits. A new window is a persistent pane.
  */
@@ -1352,7 +1352,7 @@ export async function resumeInNewWindow(record: SessionRecord): Promise<void> {
   const adapter = adapterById(record.harness);
   if (!adapter) {
     throw new GigamanageError(`No adapter is registered for harness "${record.harness}".`, {
-      fix: "Run `gmux index --rebuild`.",
+      fix: "Run `gm index --rebuild`.",
     });
   }
   const argv = newWindowArgv(adapter.resumeCommand(record));
@@ -1416,7 +1416,7 @@ git commit -m "feat(tmux): picker bridge resumes into a new tmux window"
 
 ---
 
-## Task 8: `gmux tmux install` / `uninstall`
+## Task 8: `gm tmux install` / `uninstall`
 
 **Files:**
 - Create: `src/cli/commands/tmux.ts`
@@ -1446,30 +1446,30 @@ describe("tmux.conf block management", () => {
     const out = upsertBlock("set -g mouse on\n", bindingsBlock());
     expect(out).toContain("set -g mouse on");
     expect(out).toContain(BLOCK_START);
-    expect(out).toContain("gmux overlay");
+    expect(out).toContain("gm overlay");
     expect(out).toContain(BLOCK_END);
   });
 
   it("replaces an existing block in place rather than duplicating it", () => {
     const first = upsertBlock("", bindingsBlock());
-    const second = upsertBlock(first, "# >>> gmux >>>\nbind -n C-g none\n# <<< gmux <<<");
-    expect(second.match(/>>> gmux >>>/g)).toHaveLength(1);
+    const second = upsertBlock(first, "# >>> gigamanage >>>\nbind -n C-g none\n# <<< gigamanage <<<");
+    expect(second.match(/>>> gigamanage >>>/g)).toHaveLength(1);
     expect(second).toContain("bind -n C-g none");
-    expect(second).not.toContain("gmux overlay");
+    expect(second).not.toContain("gm overlay");
   });
 
   it("removes exactly the block and nothing else", () => {
     const withBlock = upsertBlock("set -g mouse on\n", bindingsBlock());
     const cleaned = removeBlock(withBlock);
     expect(cleaned).toContain("set -g mouse on");
-    expect(cleaned).not.toContain("gmux");
+    expect(cleaned).not.toContain("gigamanage");
   });
 
   it("bindings reference the overlay and the picker bridge", () => {
     const block = bindingsBlock();
     expect(block).toContain("display-popup");
-    expect(block).toContain("gmux overlay #{window_id}");
-    expect(block).toContain("gmux pick --resume-in-window");
+    expect(block).toContain("gm overlay #{window_id}");
+    expect(block).toContain("gm pick --resume-in-window");
   });
 });
 ```
@@ -1492,20 +1492,20 @@ import type { Command } from "commander";
 
 import { dim, green } from "../format.js";
 
-export const BLOCK_START = "# >>> gmux >>>";
-export const BLOCK_END = "# <<< gmux <<<";
+export const BLOCK_START = "# >>> gigamanage >>>";
+export const BLOCK_END = "# <<< gigamanage <<<";
 
 /**
- * The bindings gmux manages. `ctrl+g` peeks the overlay full-screen; `ctrl+shift+g`
+ * The bindings gm manages. `ctrl+g` peeks the overlay full-screen; `ctrl+shift+g`
  * opens the history picker, whose Enter resumes into a new window.
  */
 export function bindingsBlock(): string {
   return [
     BLOCK_START,
     "# Peek every pane's summary in place; any key dismisses.",
-    "bind -n C-g display-popup -w 100% -h 100% -x 0 -y 0 -B -E 'gmux overlay #{window_id}'",
+    "bind -n C-g display-popup -w 100% -h 100% -x 0 -y 0 -B -E 'gm overlay #{window_id}'",
     "# Browse session history; Enter resumes into a new window.",
-    "bind -n C-S-g display-popup -w 80% -h 80% -E 'gmux pick --resume-in-window'",
+    "bind -n C-S-g display-popup -w 80% -h 80% -E 'gm pick --resume-in-window'",
     BLOCK_END,
   ].join("\n");
 }
@@ -1550,11 +1550,11 @@ async function readConf(): Promise<string> {
 }
 
 export function registerTmux(program: Command): void {
-  const tmux = program.command("tmux").description("manage gmux's tmux key bindings");
+  const tmux = program.command("tmux").description("manage gigamanage's tmux key bindings");
 
   tmux
     .command("install")
-    .description("add the gmux overlay/picker key bindings to ~/.tmux.conf")
+    .description("add the gm overlay/picker key bindings to ~/.tmux.conf")
     .action(async () => {
       await writeFile(confPath(), upsertBlock(await readConf(), bindingsBlock()), "utf8");
       process.stdout.write(`${green("installed")} bindings in ${confPath()}\n`);
@@ -1565,10 +1565,10 @@ export function registerTmux(program: Command): void {
 
   tmux
     .command("uninstall")
-    .description("remove the gmux block from ~/.tmux.conf")
+    .description("remove the gigamanage block from ~/.tmux.conf")
     .action(async () => {
       await writeFile(confPath(), removeBlock(await readConf()), "utf8");
-      process.stdout.write(`${green("removed")} the gmux block from ${confPath()}\n`);
+      process.stdout.write(`${green("removed")} the gigamanage block from ${confPath()}\n`);
     });
 }
 ```
@@ -1586,16 +1586,16 @@ Run: `npm run check` → green.
 
 ```bash
 git add src/cli/commands/tmux.ts src/cli/main.ts tests/tmux-install.test.ts
-git commit -m "feat(tmux): gmux tmux install/uninstall manages the key bindings"
+git commit -m "feat(tmux): gm tmux install/uninstall manages the key bindings"
 ```
 
 ---
 
-## Task 9: `gmux doctor` tmux check
+## Task 9: `gm doctor` tmux check
 
 **Files:**
 - Modify: `src/cli/commands/doctor.ts`
-- Test: extend `tests/services.test.ts` is not appropriate; add `tests/doctor-tmux.test.ts` covering the pure gate only (already tested in Task 3). This task is wiring — verified by running `gmux doctor`.
+- Test: extend `tests/services.test.ts` is not appropriate; add `tests/doctor-tmux.test.ts` covering the pure gate only (already tested in Task 3). This task is wiring — verified by running `gm doctor`.
 
 **Interfaces:**
 - Consumes: `tmuxVersion`, `supportsDisplayPopup` (Task 3).
@@ -1621,10 +1621,10 @@ After the `fzf` check block (the `checks.push({ name: "fzf (fuzzy picker)" … }
           ? tmuxOk
             ? `${tmuxV.raw} — \`ctrl+g\` overlay available`
             : `${tmuxV.raw} — too old; the overlay needs tmux >= 3.2`
-          : "not found — the tmux overlay (`gmux tmux install`) is unavailable",
+          : "not found — the tmux overlay (`gm tmux install`) is unavailable",
         ...(tmuxOk
           ? {}
-          : { fix: tmuxV ? "Upgrade tmux to 3.2 or newer." : "brew install tmux, then `gmux tmux install`." }),
+          : { fix: tmuxV ? "Upgrade tmux to 3.2 or newer." : "brew install tmux, then `gm tmux install`." }),
       });
 ```
 
@@ -1654,6 +1654,6 @@ git commit -m "feat(tmux): doctor reports tmux overlay availability"
 
 - [ ] **Run the full suite and layer check:** `npm run check` → green.
 - [ ] **Build:** `npm run build` → no errors.
-- [ ] **End-to-end in tmux:** `gmux tmux install`, reload tmux, open 2–3 panes (one `gmux run claude` in a repo, one plain shell), press `ctrl+g` → each pane shows its card / placeholder in place; any key restores. Press `ctrl+shift+g` → picker opens; Enter opens the chosen session in a new window.
-- [ ] **Docs:** update `README.md` with a short "tmux overlay" section (`gmux tmux install`, the two shortcuts, `gmux run`) and note the tmux ≥ 3.2 requirement beside the fzf/ripgrep companions. Commit.
+- [ ] **End-to-end in tmux:** `gm tmux install`, reload tmux, open 2–3 panes (one `gm run claude` in a repo, one plain shell), press `ctrl+g` → each pane shows its card / placeholder in place; any key restores. Press `ctrl+shift+g` → picker opens; Enter opens the chosen session in a new window.
+- [ ] **Docs:** update `README.md` with a short "tmux overlay" section (`gm tmux install`, the two shortcuts, `gm run`) and note the tmux ≥ 3.2 requirement beside the fzf/ripgrep companions. Commit.
 - [ ] **Open the PR** off branch `tmux-peek-overlay` (never merge to `main` directly).

@@ -19,7 +19,7 @@
  *    taken over. A short cooldown stops us re-deciding on every invocation.
  *
  * 3. **A feedback loop.** The provider is `claude -p`, which itself writes a new
- *    Claude Code session to disk. If those were eligible targets, gm
+ *    Claude Code session to disk. If those were eligible targets, gigamanage
  *    would summarize its own summarizer forever. `automated` and `sidechain`
  *    sessions are therefore excluded from the target set — see
  *    `autoSummarizeCandidates`, which is where that guarantee lives.

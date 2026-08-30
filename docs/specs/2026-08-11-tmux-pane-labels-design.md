@@ -29,10 +29,10 @@ Two things, one enabling the other.
 
 **Exact resolution from the pane's own process.** The agent process carries the
 session id in its command line — `codex resume <id>`, `claude --resume <id>` —
-and both ids are exactly gmux's session id (verified against a live index).
+and both ids are exactly gigamanage's session id (verified against a live index).
 So we walk the pane's process tree to the harness process and read the id
 straight off its argv; where there's no id on the line (a fresh session), we use
-that process's *real* cwd instead of the shell's. No `gmux run`, no `gmux link`, no
+that process's *real* cwd instead of the shell's. No `gm run`, no `gm link`, no
 cwd guessing.
 
 **A pane-border-label HUD.** A toggle that writes each pane's headline into its
@@ -46,15 +46,15 @@ command and one binding.
 
 ## Why not the alternatives we tried
 
-- **`#(gmux pane-label #{pane_id})` in `pane-border-format`.** tmux runs `#()`
+- **`#(gm pane-label #{pane_id})` in `pane-border-format`.** tmux runs `#()`
   asynchronously and renders empty until it completes, and per-pane `#{pane_id}`
   substitution inside `#()` proved unreliable — it came back blank. Setting pane
-  *titles* from one `gmux` pass and formatting `#{pane_title}` is synchronous,
+  *titles* from one `gm` pass and formatting `#{pane_title}` is synchronous,
   reliable, and cheaper (one resolve pass, not one command per pane per tick).
 - **`lsof` for the open `.jsonl`.** Agents don't hold the transcript open
   continuously, so `lsof` misses it. The argv id is always present for a resumed
   session and needs no elevated access.
-- **`gmux run` / `gmux link`.** Both work, but both ask you to change how you launch
+- **`gm run` / `gm link`.** Both work, but both ask you to change how you launch
   or to run a command per pane. Reading the process metadata means it "just
   works" for panes you already have open.
 
@@ -88,7 +88,7 @@ A new `services/pane-process.ts`, and a new first step in
 
 **The resolution order** in `resolvePaneToRecord`, highest first:
 
-1. **Explicit pane-link** — a `gmux run` / `gmux link` entry (unchanged; still wins).
+1. **Explicit pane-link** — a `gm run` / `gm link` entry (unchanged; still wins).
 2. **argv session id** — `pickAgentProcess` → `parseAgentSession` → the record
    with that `harness` + `sessionId`, if the index knows it. Exact.
 3. **Agent-process cwd** — the harness process's real cwd → newest session in it.
@@ -103,7 +103,7 @@ around them.
 milliseconds each, run for a handful of panes, and only when there's no explicit
 link. Acceptable for both the label pass and the popup.
 
-## 2. `gmux tmux label <window>` — the HUD toggle
+## 2. `gm tmux label <window>` — the HUD toggle
 
 A new `cli` command. It **toggles** the border-label HUD for a window:
 
@@ -116,7 +116,7 @@ A new `cli` command. It **toggles** the border-label HUD for a window:
 - **If on:** set `pane-border-status off`. The titles are left as-is (harmless;
   they're only shown when the border status is on).
 
-One `gmux` invocation resolves every pane and sets every title — no per-pane
+One `gm` invocation resolves every pane and sets every title — no per-pane
 command in the format, no async blanks. Re-running while on repopulates (a manual
 refresh); a live auto-refresh is a deliberate non-goal for v1 (see below).
 
@@ -124,17 +124,17 @@ refresh); a live auto-refresh is a deliberate non-goal for v1 (see below).
 `"project — headline"`, `"○ project"`, or `""`, clipped so a long headline can't
 blow out the border.
 
-`gmux tmux label` reuses the resolver and the summary cache; it never calls a model
+`gm tmux label` reuses the resolver and the summary cache; it never calls a model
 (labels render from what's already summarised, exactly like the overlay).
 
 ## 3. Install and the binding
 
-`gmux tmux install`'s block gains a third binding — a toggle on a key distinct from
+`gm tmux install`'s block gains a third binding — a toggle on a key distinct from
 `ctrl-g` (the popup). Default `M-g` (Alt-g), shown in the block so a user with a
 conflict can rebind, and resolving the window id in-shell like the `ctrl-g` fix:
 
 ```
-bind -n M-g run-shell "gmux tmux label \"$(tmux display -p '#{window_id}')\""
+bind -n M-g run-shell "gm tmux label \"$(tmux display -p '#{window_id}')\""
 ```
 
 `pane-border-format` is set by the command, not the config, so the styling lives
@@ -158,14 +158,14 @@ by it beyond consuming already-loaded records.
 
 ## Scope
 
-**In v0.8.0:** the process-introspection resolver, `gmux tmux label`, the toggle
-binding in `gmux tmux install`, and the popup first-paint fix.
+**In v0.8.0:** the process-introspection resolver, `gm tmux label`, the toggle
+binding in `gm tmux install`, and the popup first-paint fix.
 
 ## Non-goals (deliberately later)
 
 - **Live auto-refreshing labels** — a tmux hook or timer that repopulates titles
   as work moves. v1 populates on toggle and on demand.
-- **Fixing `gmux run`'s link capture** (it recorded nothing for a resumed session
+- **Fixing `gm run`'s link capture** (it recorded nothing for a resumed session
   in testing). Superseded in practice by argv resolution; worth its own fix.
 - **Non-Unix process introspection** — `pgrep`/`ps`/`lsof` are assumed. On a host
   without them, resolution falls back to the pane-cwd heuristic (step 4).

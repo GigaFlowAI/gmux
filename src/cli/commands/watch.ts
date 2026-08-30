@@ -67,7 +67,7 @@ async function runWatch(): Promise<void> {
 export function registerWatch(program: Command): void {
   program
     .command("watch")
-    .description("run gm's background agent: keep pane labels and summaries current")
+    .description("run gigamanage's background agent: keep pane labels and summaries current")
     .option("--stop", "stop the running watcher")
     .action(async (options: { stop?: boolean }) => {
       if (options.stop) {

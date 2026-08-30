@@ -2,7 +2,7 @@
  * Summaries: the layer that answers "where did this land, and what's next?".
  *
  * The provider is a plain CLI invoked with the distilled prompt on stdin. That
- * keeps gm harness-agnostic — it ships pointing at `claude -p`, but
+ * keeps gigamanage harness-agnostic — it ships pointing at `claude -p`, but
  * GIGAMANAGE_SUMMARY_CMD can point it at `codex exec` or anything else that
  * reads a prompt and writes text.
  *
@@ -82,7 +82,7 @@ export class CliSummaryProvider implements SummaryProvider {
 
 /**
  * The summary provider for the current config, or null when the user has
- * configured gm to make no model calls.
+ * configured gigamanage to make no model calls.
  *
  * Null is a choice being honored, not a failure. Callers render it as such.
  */

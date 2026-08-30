@@ -1,6 +1,6 @@
-# Contributing to gm
+# Contributing to gigamanage
 
-Contributions are welcome — especially **adapters for other harnesses**. If you use an agent gm doesn't read yet, that's the highest-value thing you can add, and it's one file.
+Contributions are welcome — especially **adapters for other harnesses**. If you use an agent gigamanage doesn't read yet, that's the highest-value thing you can add, and it's one file.
 
 ## Setup
 
@@ -15,7 +15,7 @@ Node 20 or newer. No other services, no API keys: the test suite never calls a m
 
 ## The one rule that matters
 
-gm has a strict, one-way dependency order:
+gigamanage has a strict, one-way dependency order:
 
 ```
 core  ←  adapters  ←  services  ←  cli
@@ -47,12 +47,12 @@ Two hard rules:
 
 ## Principles
 
-gm tries to follow a few ideas from [harness engineering](https://openai.com/index/harness-engineering/) — the practice of building environments that both humans and agents can work in:
+gigamanage tries to follow a few ideas from [harness engineering](https://openai.com/index/harness-engineering/) — the practice of building environments that both humans and agents can work in:
 
-- **If it can't be retrieved at runtime, it doesn't exist.** Every read command supports `--json`, on a versioned schema. gm is a tool agents call, not just one people type. New commands ship with `--json` from day one.
+- **If it can't be retrieved at runtime, it doesn't exist.** Every read command supports `--json`, on a versioned schema. gigamanage is a tool agents call, not just one people type. New commands ship with `--json` from day one.
 - **Errors carry their own fix.** Every `GigamanageError` takes a `fix` string that names the exact command to run. If you add an error and can't articulate the fix, that's a signal the error is in the wrong place.
 - **Mechanical enforcement over convention.** See the layer rule above.
-- **Read-only, always.** gm must never write to a session file. It owns its cache and nothing else. A PR that writes into `~/.claude` or `~/.codex` will be rejected regardless of how useful it is.
+- **Read-only, always.** gigamanage must never write to a session file. It owns its cache and nothing else. A PR that writes into `~/.claude` or `~/.codex` will be rejected regardless of how useful it is.
 
 ## Releasing (maintainers)
 
@@ -77,7 +77,7 @@ The trust config is bound to the workflow **filename**. If you rename
 `release.yml`, publishing breaks until you re-point it:
 
 ```bash
-npm trust github gm --file <new-name>.yml \
+npm trust github gigamanage --file <new-name>.yml \
   --repo GigaFlowAI/gigamanage --allow-publish
 ```
 

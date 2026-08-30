@@ -1,6 +1,6 @@
 {
   "name": "gigamanage",
-  "version": "0.17.0",
+  "version": "0.13.6",
   "description": "Browse, search and resume your AI coding agent sessions — across Claude Code, Codex, and any other harness.",
   "keywords": [
     "claude-code",
@@ -9,8 +9,7 @@
     "sessions",
     "cli",
     "context-switching",
-    "harness",
-    "tmux"
+    "harness"
   ],
   "license": "MIT",
   "type": "module",
@@ -44,7 +43,6 @@
     "dev": "tsx src/cli/main.ts",
     "test": "npm run check:layers && vitest run",
     "test:watch": "vitest",
-    "test:e2e": "npm run build && GIGAMANAGE_E2E=1 vitest run tests/e2e",
     "check:layers": "node scripts/check-layers.mjs",
     "check:types": "tsc --noEmit",
     "check": "npm run check:layers && npm run check:types && vitest run",

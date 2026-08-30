@@ -3,7 +3,7 @@
  *
  * fzf is used when installed — it gives fuzzy matching and a live preview pane
  * for free. When it is absent we fall back to a numbered prompt rather than
- * failing: gm must work on a machine with nothing but Node.
+ * failing: gigamanage must work on a machine with nothing but Node.
  *
  * Rows WRAP rather than being chopped at the right edge, in both modes. In fzf
  * that needs multi-line items: records are NUL-delimited (`--read0`) so a single
